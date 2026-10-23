@@ -1,14 +1,38 @@
 manifest:
-  defaults:
-    revision: v0.3
   remotes:
     - name: zmkfirmware
       url-base: https://github.com/zmkfirmware
-    # Additional modules containing boards/shields/custom code can be listed here as well
-    # See https://docs.zephyrproject.org/3.2.0/develop/west/manifest.html#projects
+    - name: framework
+      url-base: https://github.com/FrameworkComputer
+    - name: ziemniaczenka
+      url-base: https://github.com/Ziemniaczenka
   projects:
+    - name: zephyr
+      remote: framework
+      revision: pull/2/head
+      import:
+        name-allowlist:
+          - cmsis
+          - cmsis_6
+          - hal_nordic
+          - hostap
+          - littlefs
+          - lvgl
+          - mbedtls
+          - mcuboot
+          - net-tools
+          - oberon-psa-crypto
+          - picolibc
+          - segger
+          - tinycrypt
+          - zcbor
     - name: zmk
-      remote: zmkfirmware
+      remote: framework
+      revision: main
       import: app/west.yml
+    - name: kb_zmk_ps2_mouse_trackpoint_driver
+      remote: ziemniaczenka
+      revision: main
+      path: kb_zmk_ps2_mouse_trackpoint_driver
   self:
     path: config
