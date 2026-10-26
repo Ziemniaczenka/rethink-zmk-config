@@ -1,38 +1,52 @@
+# ZMK: zmkfirmware/zmk#3387 (draft port to Zephyr 4.4), run on Zephyr 4.5.
+# Zephyr: FrameworkComputer/zephyr#2, adds framework_wireless_tp_kb after v4.5.0-rc1.
+# framework-cb: Ziemniaczenka/zmk-config-fw-cb (fork of Shaedil/zmk-config-fw-cb), ZMK board variant
+#   framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk (device_next USB HID, mode
+#   switch, charger, fuel gauge, watchdog, MCUboot signing) and patches/ that
+#   make ZMK #3387 build on Zephyr 4.5. scripts/build.sh applies them.
+#
+# Everything is pinned by commit. When bumping zephyr, also bump ZEPHYR_REV in
+# docker/Dockerfile.
 manifest:
   remotes:
-    - name: zmkfirmware
-      url-base: https://github.com/zmkfirmware
+    - name: petejohanson
+      url-base: https://github.com/petejohanson
     - name: framework
       url-base: https://github.com/FrameworkComputer
     - name: ziemniaczenka
       url-base: https://github.com/Ziemniaczenka
   projects:
+    - name: zmk
+      remote: petejohanson
+      revision: 5565f2179c1af83bdf210a6a362dfa4193c56189 # core/move-to-zephyr-4-4-0
+      import: app/west.yml
+    # Replaces ZMK's entry; must stay after zmk
     - name: zephyr
       remote: framework
-      revision: pull/2/head
+      revision: 8597b2fa1b965f121ec507916b182cb0c60eb4a6 # framework-wireless-boards
+      clone-depth: 1
       import:
-        name-allowlist:
-          - cmsis
-          - cmsis_6
-          - hal_nordic
-          - hostap
-          - littlefs
-          - lvgl
-          - mbedtls
+        name-blocklist:
+          - ci-tools
+          - hal_altera
+          - hal_cypress
+          - hal_infineon
+          - hal_microchip
+          - hal_nxp
+          - hal_openisa
+          - hal_xtensa
+          - hal_st
+          - hal_ti
+          - loramac-node
           - mcuboot
+          - mcumgr
           - net-tools
-          - oberon-psa-crypto
-          - picolibc
-          - segger
-          - tinycrypt
-          - zcbor
-    - name: zmk
-      remote: framework
-      revision: main
-      import: app/west.yml
-    - name: kb_zmk_ps2_mouse_trackpoint_driver
+          - openthread
+          - edtt
+          - trusted-firmware-m
+    - name: zmk-config-fw-cb
       remote: ziemniaczenka
-      revision: main
-      path: kb_zmk_ps2_mouse_trackpoint_driver
+      revision: c66950310ce028d07e60745ff075be915753e93a # main
+      path: modules/framework-cb
   self:
     path: config

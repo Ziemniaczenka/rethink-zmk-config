@@ -1,0 +1,10 @@
+/*
+ * SPDX-License-Identifier: MIT
+ */
+
+// cdc_acm_uart0 is defined under &zephyr_udc0 by framework-cb's board variant
+/ {
+    chosen {
+        zephyr,console = &cdc_acm_uart0;
+    };
+};

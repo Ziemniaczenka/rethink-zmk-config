@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+
+if SHIELD_RETHINK_BARE_TESTER
+
+config ZMK_KEYBOARD_NAME
+    default "ReThink Tester"
+
+endif # SHIELD_RETHINK_BARE_TESTER

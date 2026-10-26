@@ -1,0 +1,6 @@
+# imgtool signs images for Framework's MCUboot; grpcio/protobuf build ZMK Studio's nanopb messages.
+imgtool==2.4.0
+west==1.5.0
+grpcio==1.84.0
+grpcio-tools==1.84.0
+protobuf==7.36.2

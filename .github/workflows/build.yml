@@ -1,6 +1,58 @@
-name: Build ZMK firmware
+name: Build
+
 on: [push, pull_request, workflow_dispatch]
 
 jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.fetch.outputs.include }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: fetch
+        run: echo "include=$(yq -oj -I0 '.include' build.yaml)" >> "$GITHUB_OUTPUT"
+
   build:
-    uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@v0.3
+    needs: matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.matrix.outputs.include) }}
+    env:
+      ZMK_WS: ${{ github.workspace }}/.zmk-ws
+    steps:
+      - uses: actions/checkout@v6
+
+      # Same image and script as build.ps1 and the devcontainer
+      - name: Build image
+        run: docker build -t rethink-zmk-build docker
+
+      - name: Cache west workspace
+        uses: actions/cache@v5
+        continue-on-error: true
+        with:
+          path: |
+            .zmk-ws/.west
+            .zmk-ws/config
+            .zmk-ws/modules
+            .zmk-ws/optional
+            .zmk-ws/zephyr
+            .zmk-ws/zmk
+          key: west-${{ hashFiles('config/west.yml', 'patches/**') }}
+
+      - name: Build
+        run: |
+          mkdir -p "$ZMK_WS"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/repo" -v "$ZMK_WS:/zmk-ws" -w /repo \
+            -e BOARD="${{ matrix.board }}" \
+            -e SHIELD="${{ matrix.shield }}" \
+            -e SNIPPET="${{ matrix.snippet }}" \
+            -e CMAKE_ARGS="${{ matrix.cmake-args }}" \
+            rethink-zmk-build bash scripts/build.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.shield }}${{ matrix.snippet && format('-{0}', matrix.snippet) || '' }}
+          path: out/*.signed.bin

@@ -1,0 +1,8 @@
+file_format: "1"
+id: rethink_bare_tester
+name: ReThink Bare Control Board Tester
+type: shield
+url: https://github.com/Ziemniaczenka/ReThink_Keyboard
+requires: [framework_wireless_tp_kb]
+features:
+  - keys

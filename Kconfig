@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: MIT
+
+menu "ReThink keyboard"
+
+config RETHINK_PAIRING_BUTTON
+	bool "Pairing button selects and clears Bluetooth profiles"
+	default y
+	depends on ZMK_BLE
+	depends on $(dt_nodelabel_enabled,pairing_button)
+	select INPUT
+	help
+	  Tap: next Bluetooth profile. Hold: clear the active profile's bond.
+	  Reads Framework's pairing_button gpio-keys node, outside the key
+	  matrix. Holding it while plugging in USB still enters MCUboot recovery.
+
+config RETHINK_PAIRING_BUTTON_HOLD_MS
+	int "Hold time to clear the active profile (ms)"
+	default 3000
+	depends on RETHINK_PAIRING_BUTTON
+
+config RETHINK_PROFILE_LEDS
+	bool "Show the active Bluetooth profile on the white LEDs"
+	default y
+	depends on ZMK_BLE
+	depends on $(dt_nodelabel_enabled,led_w1)
+	help
+	  Lights white LED 1-4 for the active profile after boot and on every
+	  profile change, blinking while the profile is unpaired. Drives the
+	  pins as GPIOs, so PWM20 must stay unused (CONFIG_PWM not enabled).
+
+config RETHINK_PROFILE_LEDS_TIMEOUT_MS
+	int "Time the profile LED stays on (ms)"
+	default 3000
+	depends on RETHINK_PROFILE_LEDS
+
+endmenu

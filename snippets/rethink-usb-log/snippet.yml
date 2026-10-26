@@ -1,0 +1,4 @@
+name: rethink-usb-log
+append:
+  EXTRA_CONF_FILE: usb-log.conf
+  EXTRA_DTC_OVERLAY_FILE: usb-log.overlay

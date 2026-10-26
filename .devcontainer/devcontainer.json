@@ -1,0 +1,24 @@
+{
+  // Same image as build.ps1 and CI. The west workspace lives in the
+  // rethink-zmk-ws volume, shared with build.ps1. Build with scripts/build.sh.
+  "name": "ReThink ZMK",
+  "build": {
+    "dockerfile": "../docker/Dockerfile",
+    "context": "../docker"
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/repo,type=bind",
+  "workspaceFolder": "/repo",
+  "mounts": ["source=rethink-zmk-ws,target=/zmk-ws,type=volume"],
+  "containerEnv": {
+    "ZMK_WS": "/zmk-ws"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "nordic-semiconductor.nrf-devicetree",
+        "nordic-semiconductor.nrf-kconfig"
+      ]
+    }
+  }
+}
