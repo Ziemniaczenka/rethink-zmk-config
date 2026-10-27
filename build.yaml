@@ -6,3 +6,6 @@ include:
   - board: framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk
     shield: rethink_bare_tester
     snippet: rethink-usb-log
+  - board: framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk
+    shield: rethink_hw_tester
+    snippet: rethink-usb-log

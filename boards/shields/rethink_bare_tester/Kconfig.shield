@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Ziemniaczenka
 # SPDX-License-Identifier: MIT
 
 config SHIELD_RETHINK_BARE_TESTER

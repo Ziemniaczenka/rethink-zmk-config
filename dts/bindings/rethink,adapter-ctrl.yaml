@@ -1,0 +1,74 @@
+# Copyright (c) 2026 Ziemniaczenka
+# SPDX-License-Identifier: MIT
+
+description: |
+  ReThink adapter control: brings up the PCAL6416A I/O expander (U1) and owns
+  its pins. Other code uses them through include/rethink/adapter.h, since
+  devices may not depend on the deferred expander directly.
+
+  The expander is optional at runtime and is initialized with device_init().
+  If it does not answer, a warning is logged and the board keeps working
+  without it. With CONFIG_RETHINK_EXPANDER_SUPPLY_TP_3V3 (JP10 2-3) U1 and its
+  I2C pull-ups run from TP_3V3, which is then enabled first.
+
+  Assembly options (jumpers, fitted parts) are Kconfig symbols, set in
+  config/rethink.conf. The properties below describe the wiring; shields only
+  list the LEDs and detect pin their keyboard has.
+
+compatible: "rethink,adapter-ctrl"
+
+properties:
+  expander:
+    type: phandle
+    required: true
+    description: PCAL6416A node. Must have zephyr,deferred-init.
+
+  tp-power-supply:
+    type: phandle
+    description: Regulator for TP_3V3 (Control Board P3.12).
+
+  power-on-delay-ms:
+    type: int
+    default: 10
+    description: Time between enabling tp-power-supply and probing the expander.
+
+  pump-en-gpios:
+    type: phandle-array
+    description: |
+      LM2775 charge pump enable (TP_5V). Driven low at init, unless
+      CONFIG_RETHINK_PUMP_EN_TIED (JP1 closed).
+
+  boost-en-gpios:
+    type: phandle-array
+    description: |
+      TPS610333 backlight boost enable (BL_5V). Driven low at init, unless
+      CONFIG_RETHINK_BOOST_EN_TIED (JP2 closed).
+
+  bl-detect-gpios:
+    type: phandle-array
+    description: |
+      KBD_BL_DTCT. Sampled once at init with the pull-up enabled, then the
+      pull-up is disabled again. Low means a backlit keyboard is connected.
+
+  # Status LED sinks. A lit LED pulls the pin low; an unlit one leaves it
+  # high-impedance (open-drain emulation, since the PCAL64xxA driver rejects
+  # GPIO_OPEN_DRAIN). Pin flags are ignored.
+  pwr-led-gpios:
+    type: phandle-array
+    description: LEDPWR, power LED (Mezzanine) or Fn lock LED (FFC2).
+
+  mute-led-gpios:
+    type: phandle-array
+    description: LEDMUTE
+
+  micmute-led-gpios:
+    type: phandle-array
+    description: LEDMICMUTE
+
+  capslock-led-gpios:
+    type: phandle-array
+    description: LEDCPSLOCK
+
+  numlock-led-gpios:
+    type: phandle-array
+    description: LEDNUMLOCK (FFC2 keyboards with a numpad)

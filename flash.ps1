@@ -3,8 +3,9 @@
     Flash a signed image from out\ over MCUboot USB serial recovery.
 
 .DESCRIPTION
-    Hold the pairing button while plugging in USB; the bootloader shows up as
-    a USB serial port (green LED). Needs mcumgr on PATH:
+    Hold the pairing button while plugging in USB, or with a battery hold it
+    for 10 s while the firmware runs; the bootloader shows up as a USB serial
+    port (green LED). Needs mcumgr on PATH:
         go install github.com/apache/mynewt-mcumgr-cli/mcumgr@latest
 
     Framework's MCUboot waits for a CDC ACM line-state request (DTR/RTS)
@@ -17,13 +18,17 @@
     .\flash.ps1 -Shield rethink_bare_tester -Snippet rethink-usb-log
     .\flash.ps1 -File out\something.signed.bin
     .\flash.ps1 -Shield rethink_bare_tester -Port COM7  # explicit port
+    .\flash.ps1 -Shield rethink_bare_tester -Mtu ''     # mcumgr's default packet size
 #>
 [CmdletBinding()]
 param(
     [string]$Port = '',
     [string]$Shield = '',
     [string]$Snippet = '',
-    [string]$File = ''
+    [string]$File = '',
+    # SMP packet size for mcumgr (4 KB/s at 1024 vs 1 KB/s at mcumgr's
+    # default); empty = mcumgr's default
+    [string]$Mtu = '1024'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,8 +44,10 @@ if (-not $File -and -not $Shield) {
 Usage:
   .\flash.ps1 -Shield <shield> [-Snippet <snippet>] [-Port COMx]
   .\flash.ps1 -File <image.signed.bin> [-Port COMx]
+  Optional: -Mtu <bytes>, SMP packet size (default 1024, '' for mcumgr's)
 
-Hold the pairing button while plugging in USB first. The port is auto-detected.
+Enter the bootloader first: hold the pairing button while plugging in USB, or
+(with a battery) hold it for 10 s while running. The port is auto-detected.
 '@
     Write-Host 'Images in out\:'
     $images = @(Get-ChildItem (Join-Path $PSScriptRoot 'out') -Filter '*.signed.bin' -ErrorAction SilentlyContinue)
@@ -75,7 +82,7 @@ if (-not $Port) {
         $reason = if ($recovery.Count -eq 0) { 'No board in recovery mode found' } else { 'More than one board in recovery mode' }
         Write-Host "${reason}. Serial ports:"
         $ports | ForEach-Object { Write-Host "  $($_.Name)  [$($_.PNPDeviceID)]" }
-        Fail 'Hold the pairing button while plugging in USB, or pass -Port COMx.'
+        Fail 'Enter the bootloader (pairing button), or pass -Port COMx.'
     }
 }
 
@@ -93,6 +100,7 @@ try {
 }
 
 $conn = "dev=$Port,baud=115200"
+if ($Mtu) { $conn += ",mtu=$Mtu" }
 Write-Host "Uploading $File to $Port"
 & mcumgr --conntype serial --connstring $conn image upload $File
 if ($LASTEXITCODE -ne 0) { Fail 'mcumgr upload failed' }

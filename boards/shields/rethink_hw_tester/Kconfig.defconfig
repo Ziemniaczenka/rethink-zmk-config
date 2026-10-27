@@ -1,0 +1,9 @@
+# Copyright (c) 2026 Ziemniaczenka
+# SPDX-License-Identifier: MIT
+
+if SHIELD_RETHINK_HW_TESTER
+
+config ZMK_KEYBOARD_NAME
+    default "ReThink HW Test"
+
+endif # SHIELD_RETHINK_HW_TESTER

@@ -1,0 +1,44 @@
+/*
+ * Copyright (c) 2026 Ziemniaczenka
+ * SPDX-License-Identifier: MIT
+ *
+ * ReThink adapter v1.0: PCAL6416A (U1, 0x20) on the touchpad I2C bus.
+ * Include after rethink_cb.dtsi. Pin map: ReThink_keyboard
+ * docs/pinouts/io_expander.md.
+ *
+ * Shields add what their keyboard has to &rethink_adapter: the status LEDs
+ * (pwr/mute/micmute/capslock/numlock-led-gpios) and bl-detect-gpios. Backlit
+ * keyboards also include rethink_backlight.dtsi.
+ *
+ * Jumpers and fitted parts are Kconfig options (config/rethink.conf).
+ */
+
+&i2c22 {
+    // Probed by rethink,adapter-ctrl; absent on a bare Control Board
+    rethink_expander: gpio@20 {
+        compatible = "nxp,pcal6416a";
+        reg = <0x20>;
+        gpio-controller;
+        #gpio-cells = <2>;
+        ngpios = <16>;
+        zephyr,deferred-init;
+    };
+};
+
+/ {
+    rethink_adapter: rethink_adapter {
+        compatible = "rethink,adapter-ctrl";
+        expander = <&rethink_expander>;
+        tp-power-supply = <&tp_power>;
+        pump-en-gpios = <&rethink_expander 0 GPIO_ACTIVE_HIGH>;
+        boost-en-gpios = <&rethink_expander 1 GPIO_ACTIVE_HIGH>;
+    };
+};
+
+// U1 pins for the shields
+#define RETHINK_EXP_LEDPWR 10      // P1_2, power LED (Mezzanine) / Fn lock (FFC2)
+#define RETHINK_EXP_LEDMUTE 11     // P1_3
+#define RETHINK_EXP_LEDMICMUTE 12  // P1_4
+#define RETHINK_EXP_LEDCPSLOCK 13  // P1_5, also KBD_BL_DTCT on the T430 (Mezzanine 21)
+#define RETHINK_EXP_LEDNUMLOCK 14  // P1_6
+#define RETHINK_EXP_KBD_BL_DTCT 15 // P1_7, FFC2 12-pin connector

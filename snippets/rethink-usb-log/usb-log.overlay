@@ -1,4 +1,5 @@
 /*
+ * Copyright (c) 2026 Ziemniaczenka
  * SPDX-License-Identifier: MIT
  */
 

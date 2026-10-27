@@ -1,6 +1,124 @@
+# Copyright (c) 2026 Ziemniaczenka
 # SPDX-License-Identifier: MIT
 
 menu "ReThink keyboard"
+
+menu "Hardware options"
+	comment "Set in config/rethink.conf to match the adapter's jumpers and parts"
+
+choice RETHINK_EXPANDER_SUPPLY
+	prompt "PCAL6416A supply (adapter JP10)"
+	default RETHINK_EXPANDER_SUPPLY_LED_3V3
+
+config RETHINK_EXPANDER_SUPPLY_LED_3V3
+	bool "LED_3V3, always on (JP10 1-2, default)"
+
+config RETHINK_EXPANDER_SUPPLY_TP_3V3
+	bool "TP_3V3, switched by P3.12 (JP10 2-3)"
+	help
+	  TP_3V3 is switched on before the expander is probed and stays on
+	  while the adapter is in use.
+
+endchoice
+
+config RETHINK_PUMP_EN_TIED
+	bool "Charge pump enable tied to TP_3V3 (adapter JP1 closed)"
+	help
+	  The pump then runs whenever TP_3V3 is on. The expander leaves P0_0
+	  (PUMP_EN) as an input so it does not drive against TP_3V3.
+
+config RETHINK_BOOST_FITTED
+	bool "Backlight boost converter U4 fitted"
+	default y
+	help
+	  Fitted on the Full and FFC2 variants, not on Mezz_no_BL and FFC1.
+	  Without it the backlight power chain is never switched on.
+
+config RETHINK_BOOST_EN_TIED
+	bool "Backlight boost enable tied to VLED_BL (adapter JP2 closed)"
+	help
+	  The boost then runs whenever the Control Board switches VLED_BL on.
+	  The expander leaves P0_1 (BOOST_EN) as an input so it does not drive
+	  against VLED_BL.
+
+choice RETHINK_BACKLIGHT_SUPPLY
+	prompt "VLED_BL source on the Control Board"
+	default RETHINK_BACKLIGHT_SUPPLY_BUCK1
+
+config RETHINK_BACKLIGHT_SUPPLY_BUCK1
+	bool "nPM1300 BUCK1, 3.3 V (R62 fitted, default)"
+	help
+	  BUCK1 is switched on with the backlight. The nPM1300 bucks deliver
+	  up to 200 mA, hence the lower RETHINK_BACKLIGHT_MAX_DUTY default.
+
+config RETHINK_BACKLIGHT_SUPPLY_VBAT
+	bool "Battery, VBAT (R59 fitted, R62 removed; Control Board rev. 1)"
+	help
+	  BUCK1 stays off. Without a battery there is no backlight, also on
+	  USB. The current bypasses the nPM1300's system path.
+
+config RETHINK_BACKLIGHT_SUPPLY_VSYS
+	bool "nPM1300 VSYS (expected on the next Control Board revision)"
+	help
+	  BUCK1 stays off. VSYS is fed from USB or the battery, so the
+	  backlight works in both cases and its current goes through the
+	  nPM1300 like any other load (VBUS limit 500 mA).
+
+endchoice
+
+config RETHINK_BACKLIGHT_MAX_DUTY
+	int "PWM duty cycle at full brightness (%)"
+	range 1 100
+	default 60 if RETHINK_BACKLIGHT_SUPPLY_BUCK1
+	default 100
+	help
+	  Scales every brightness level to limit the backlight current drawn
+	  from VLED_BL. The defaults are not measured yet.
+
+choice RETHINK_TP1_SUPPLY
+	prompt "Mezzanine/FFC1 pointing stick supply (adapter JP6, JP4, JP5)"
+	default RETHINK_TP1_SUPPLY_5V
+	help
+	  Used by the TrackPoint support. JP4 and JP5 must match JP6.
+
+config RETHINK_TP1_SUPPLY_5V
+	bool "5 V from the charge pump, through the level shifter (default)"
+
+config RETHINK_TP1_SUPPLY_3V3
+	bool "TP_3V3, level shifter bypassed"
+
+endchoice
+
+choice RETHINK_TP2_SUPPLY
+	prompt "FFC2 pointing stick supply (adapter JP7, JP8, JP9)"
+	default RETHINK_TP2_SUPPLY_3V3
+	help
+	  Used by the TrackPoint support. JP8 and JP9 must match JP7.
+
+config RETHINK_TP2_SUPPLY_3V3
+	bool "TP_3V3, level shifter bypassed (default)"
+
+config RETHINK_TP2_SUPPLY_5V
+	bool "5 V from the charge pump, through the level shifter"
+
+endchoice
+
+choice RETHINK_TP2_RESET_PULL
+	prompt "FFC2 pointing stick reset resistor"
+	default RETHINK_TP2_RESET_PULL_UP
+	help
+	  Used by the TrackPoint support. The Mezzanine/FFC1 reset (TP1_RST)
+	  only has the R14 pull-up.
+
+config RETHINK_TP2_RESET_PULL_UP
+	bool "Pull-up R22: held in reset until released (default)"
+
+config RETHINK_TP2_RESET_PULL_DOWN
+	bool "Pull-down R23: running unless reset is driven"
+
+endchoice
+
+endmenu
 
 config RETHINK_PAIRING_BUTTON
 	bool "Pairing button selects and clears Bluetooth profiles"
@@ -8,8 +126,12 @@ config RETHINK_PAIRING_BUTTON
 	depends on ZMK_BLE
 	depends on $(dt_nodelabel_enabled,pairing_button)
 	select INPUT
+	select REBOOT
 	help
-	  Tap: next Bluetooth profile. Hold: clear the active profile's bond.
+	  Tap: next Bluetooth profile. Hold, then release: clear the active
+	  profile's bond. Both only while Bluetooth is on (mode switch).
+	  Triple tap: unlock the backlight (RETHINK_BACKLIGHT). Long hold:
+	  reboot into MCUboot USB recovery.
 	  Reads Framework's pairing_button gpio-keys node, outside the key
 	  matrix. Holding it while plugging in USB still enters MCUboot recovery.
 
@@ -17,6 +139,27 @@ config RETHINK_PAIRING_BUTTON_HOLD_MS
 	int "Hold time to clear the active profile (ms)"
 	default 3000
 	depends on RETHINK_PAIRING_BUTTON
+	help
+	  The bond is cleared when the button is released after this time,
+	  but before RETHINK_PAIRING_BUTTON_RECOVERY_MS.
+
+config RETHINK_PAIRING_BUTTON_RECOVERY_MS
+	int "Hold time to reboot into the bootloader (ms, 0 = off)"
+	default 10000
+	depends on RETHINK_PAIRING_BUTTON
+	help
+	  Resets while the button is still held, so MCUboot sees it and
+	  enters USB serial recovery. Needed with a battery connected, where
+	  plugging in USB does not reset the board. Uses an nPM1300 reset
+	  (power cycle), since the factory MCUboot ignores the button after a
+	  soft reset; falls back to a soft reset without the PMIC.
+
+config RETHINK_PAIRING_BUTTON_TAP_WINDOW_MS
+	int "Maximum gap between taps of a multi-tap (ms)"
+	default 400
+	depends on RETHINK_PAIRING_BUTTON
+	help
+	  A single tap acts after this delay, once no second tap followed.
 
 config RETHINK_PROFILE_LEDS
 	bool "Show the active Bluetooth profile on the white LEDs"
@@ -32,5 +175,61 @@ config RETHINK_PROFILE_LEDS_TIMEOUT_MS
 	int "Time the profile LED stays on (ms)"
 	default 3000
 	depends on RETHINK_PROFILE_LEDS
+
+DT_COMPAT_RETHINK_ADAPTER_CTRL := rethink,adapter-ctrl
+
+config RETHINK_ADAPTER
+	bool "ReThink adapter control (PCAL6416A)"
+	default $(dt_compat_enabled,$(DT_COMPAT_RETHINK_ADAPTER_CTRL))
+	select I2C
+	select GPIO
+	select REGULATOR
+	help
+	  Probes the adapter's PCAL6416A and drives its status LED, charge
+	  pump and boost pins. Without the adapter it logs a warning and
+	  carries on.
+
+if RETHINK_ADAPTER
+
+config RETHINK_ADAPTER_INIT_PRIORITY
+	int "Init priority"
+	default 90
+	help
+	  After I2C, the PCAL64xxA driver (GPIO_PCAL64XXA_INIT_PRIORITY) and
+	  regulator-fixed (REGULATOR_FIXED_INIT_PRIORITY).
+
+config RETHINK_ADAPTER_LED_SELFTEST
+	bool "Light each status LED in turn at boot"
+
+module = RETHINK_ADAPTER
+module-str = ReThink adapter
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # RETHINK_ADAPTER
+
+DT_COMPAT_RETHINK_BACKLIGHT := rethink,backlight
+
+config RETHINK_BACKLIGHT
+	bool "ReThink backlight power chain and PWM"
+	default $(dt_compat_enabled,$(DT_COMPAT_RETHINK_BACKLIGHT))
+	select LED
+	select PWM
+	select GPIO
+	select REGULATOR
+
+if RETHINK_BACKLIGHT
+
+config RETHINK_BACKLIGHT_INIT_PRIORITY
+	int "Init priority"
+	default 91
+	help
+	  After RETHINK_ADAPTER_INIT_PRIORITY and the nPM13xx regulators
+	  (REGULATOR_NPM13XX_INIT_PRIORITY).
+
+module = RETHINK_BACKLIGHT
+module-str = ReThink backlight
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # RETHINK_BACKLIGHT
 
 endmenu

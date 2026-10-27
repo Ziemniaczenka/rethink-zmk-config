@@ -1,0 +1,44 @@
+# Copyright (c) 2026 Ziemniaczenka
+# SPDX-License-Identifier: MIT
+
+description: |
+  ReThink keyboard backlight: LED API device for ZMK's zmk,backlight.
+
+  Power chain, switched on only while the brightness is above zero:
+  vin-supply (nPM1300 BUCK1) -> enable-gpios (Control Board P3.11, VLED_BL to
+  the adapter) -> adapter boost converter (BOOST_EN, through
+  rethink,adapter-ctrl). The duty cycle on pwms (P1.17) is the brightness
+  scaled by CONFIG_RETHINK_BACKLIGHT_MAX_DUTY.
+
+  vin-supply is only switched with CONFIG_RETHINK_BACKLIGHT_SUPPLY_BUCK1. With
+  CONFIG_RETHINK_BOOST_FITTED=n the chain is never switched on.
+
+  Safety interlock: the chain stays off unless the adapter detected a backlit
+  keyboard (KBD_BL_DTCT low) or the user unlocked it with
+  rethink_backlight_unlock() (triple press of the pairing button).
+
+compatible: "rethink,backlight"
+
+properties:
+  pwms:
+    type: phandle-array
+    required: true
+
+  enable-gpios:
+    type: phandle-array
+    description: Control Board switch feeding VLED_BL to the adapter (P3.11).
+
+  vin-supply:
+    type: phandle
+    description: Regulator behind enable-gpios (nPM1300 BUCK1, default source).
+
+  power-on-delay-ms:
+    type: int
+    default: 5
+    description: Settling time after switching the power chain on, before PWM starts.
+
+child-binding:
+  description: One backlight channel. ZMK counts the children of zmk,backlight.
+  properties:
+    label:
+      type: string

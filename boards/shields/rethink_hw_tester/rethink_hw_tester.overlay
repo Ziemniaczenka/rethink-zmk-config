@@ -1,0 +1,24 @@
+/*
+ * Copyright (c) 2026 Ziemniaczenka
+ * SPDX-License-Identifier: MIT
+ *
+ * Adapter hardware tester: the bare tester's header matrix plus the ReThink
+ * adapter (PCAL6416A, status LEDs, backlight power chain and PWM on P1.17).
+ * Runs on a bare Control Board too: the adapter is reported missing and the
+ * Control Board side of the backlight chain can still be measured.
+ */
+
+#include "../rethink_common/rethink_cb.dtsi"
+#include "../rethink_common/rethink_adapter.dtsi"
+#include "../rethink_common/rethink_backlight.dtsi"
+#include "../rethink_common/rethink_header_matrix.dtsi"
+
+// Everything an FFC2 keyboard with a numpad (T580, L15) has
+&rethink_adapter {
+    bl-detect-gpios = <&rethink_expander RETHINK_EXP_KBD_BL_DTCT GPIO_ACTIVE_LOW>;
+    pwr-led-gpios = <&rethink_expander RETHINK_EXP_LEDPWR 0>;
+    mute-led-gpios = <&rethink_expander RETHINK_EXP_LEDMUTE 0>;
+    micmute-led-gpios = <&rethink_expander RETHINK_EXP_LEDMICMUTE 0>;
+    capslock-led-gpios = <&rethink_expander RETHINK_EXP_LEDCPSLOCK 0>;
+    numlock-led-gpios = <&rethink_expander RETHINK_EXP_LEDNUMLOCK 0>;
+};

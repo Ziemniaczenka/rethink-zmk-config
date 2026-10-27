@@ -1,0 +1,31 @@
+/*
+ * Copyright (c) 2026 Ziemniaczenka
+ * SPDX-License-Identifier: MIT
+ *
+ * Keyboard backlight: VLED_BL (P3.11) -> adapter boost (BOOST_EN) -> PWM on
+ * P1.17. Include after rethink_adapter.dtsi, only for backlit keyboards.
+ * Supply source and duty cycle limit: config/rethink.conf.
+ */
+
+#include <zephyr/dt-bindings/pwm/pwm.h>
+
+/ {
+    chosen {
+        zmk,backlight = &rethink_backlight;
+    };
+
+    rethink_backlight: rethink_backlight {
+        compatible = "rethink,backlight";
+        pwms = <&pwm22 0 PWM_HZ(4096) PWM_POLARITY_NORMAL>;
+        enable-gpios = <&gpio3 11 GPIO_ACTIVE_HIGH>;
+        vin-supply = <&npm1300_buck1>;
+
+        backlight_channel {
+            label = "Keyboard backlight";
+        };
+    };
+};
+
+&pwm22 {
+    status = "okay";
+};

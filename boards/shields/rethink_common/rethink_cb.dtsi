@@ -1,0 +1,46 @@
+/*
+ * Copyright (c) 2026 Ziemniaczenka
+ * SPDX-License-Identifier: MIT
+ *
+ * Control Board setup shared by all ReThink shields.
+ */
+
+// White LEDs (src/profile_leds.c) and the RGB LED (framework-cb's
+// status_led.c) are driven as GPIOs. With CONFIG_PWM enabled, PWM20/21 would
+// take over their pins.
+&pwm20 {
+    status = "disabled";
+};
+
+&pairing_leds {
+    status = "disabled";
+};
+
+&pwm21 {
+    status = "disabled";
+};
+
+&rgb_pwmleds {
+    status = "disabled";
+};
+
+// Framework's backlight PWM on P3.11. On ReThink, P3.11 switches VLED_BL to
+// the adapter (rethink,backlight enable-gpios) and PWM22 drives P1.17.
+&backlight_pwm {
+    status = "disabled";
+};
+
+&pinctrl {
+    pwm22_default: pwm22_default {
+        group1 {
+            psels = <NRF_PSEL(PWM_OUT0, 1, 17)>;
+        };
+    };
+
+    pwm22_sleep: pwm22_sleep {
+        group1 {
+            psels = <NRF_PSEL(PWM_OUT0, 1, 17)>;
+            low-power-enable;
+        };
+    };
+};
