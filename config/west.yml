@@ -46,7 +46,7 @@ manifest:
           - trusted-firmware-m
     - name: zmk-config-fw-cb
       remote: ziemniaczenka
-      revision: c66950310ce028d07e60745ff075be915753e93a # main
+      revision: 2278477d30cb04aec6de89a6e97ccd4ece87e0d9 # main
       path: modules/framework-cb
   self:
     path: config
