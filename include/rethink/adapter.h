@@ -39,3 +39,7 @@ int rethink_adapter_boost_set(bool on);
 int rethink_adapter_led_set(enum rethink_led led, bool on);
 
 const char *rethink_adapter_led_name(enum rethink_led led);
+
+// Before System OFF: status LEDs off, pump and boost disabled, TP_3V3 released.
+// The expander keeps its outputs while the Control Board is off.
+void rethink_adapter_power_down(void);

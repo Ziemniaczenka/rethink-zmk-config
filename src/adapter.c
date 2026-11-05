@@ -184,6 +184,32 @@ static void selftest(struct k_work *work) {
 
 #endif
 
+void rethink_adapter_power_down(void) {
+    if (!ready) {
+        return;
+    }
+
+#if IS_ENABLED(CONFIG_RETHINK_ADAPTER_LED_SELFTEST)
+    k_work_cancel_delayable(&selftest_work);
+#endif
+
+    for (size_t i = 0; i < RETHINK_LED_COUNT; i++) {
+        if (leds[i].port != NULL) {
+            led_apply(&leds[i], false);
+        }
+    }
+
+#if HAS_PUMP_EN
+    gpio_pin_set_dt(&pump_en, 0);
+#endif
+#if HAS_BOOST_EN
+    gpio_pin_set_dt(&boost_en, 0);
+#endif
+#if EXPANDER_ON_TP_POWER
+    regulator_disable(tp_power);
+#endif
+}
+
 static int adapter_init(void) {
     int err;
 

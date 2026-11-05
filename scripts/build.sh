@@ -15,6 +15,7 @@
 #   ARTIFACT optional output name, default <shield>[-<snippet>]
 #   ZMK_WS   west workspace, default /zmk-ws (a Docker volume)
 #   CMAKE_ARGS extra arguments passed to CMake
+#   FRAMEWORK_CB_LOCAL set when a local framework-cb is mounted (no west update)
 #
 # Outputs out/<ARTIFACT>.signed.bin in the repository.
 
@@ -46,10 +47,15 @@ patch_project() {
     done
     [ -e "${patches[0]:-}" ] || return 0
     # Already applied
-    cat "${patches[@]}" | git -C "$dir" apply --reverse --check 2>/dev/null && return 0
+    series "${patches[@]}" | git -C "$dir" apply --reverse --check 2>/dev/null && return 0
     reset_checkout "$dir"
-    cat "${patches[@]}" | git -C "$dir" apply ||
+    series "${patches[@]}" | git -C "$dir" apply ||
         die "patches for $1 do not apply to the $1 revision in config/west.yml"
+}
+
+# Patches from a Windows checkout (-FrameworkCb) may have CRLF line endings
+series() {
+    sed 's/\r$//' "$@"
 }
 
 patch_all() {
@@ -66,6 +72,9 @@ unpatch_all() {
 }
 
 update() {
+    # west would reset the mounted checkout to the pinned revision
+    [ -z "${FRAMEWORK_CB_LOCAL:-}" ] ||
+        die "west update needed, but a local framework-cb is mounted; build once without -FrameworkCb"
     mkdir -p "$WS/config"
     cp "$REPO/config/west.yml" "$WS/config/west.yml"
     [ -d "$WS/.west" ] || (cd "$WS" && west init -l config)

@@ -19,6 +19,7 @@
     .\flash.ps1 -File out\something.signed.bin
     .\flash.ps1 -Shield rethink_bare_tester -Port COM7  # explicit port
     .\flash.ps1 -Shield rethink_bare_tester -Mtu ''     # mcumgr's default packet size
+    .\flash.ps1 -Reset                                  # leave the bootloader without flashing
 #>
 [CmdletBinding()]
 param(
@@ -28,7 +29,10 @@ param(
     [string]$File = '',
     # SMP packet size for mcumgr (4 KB/s at 1024 vs 1 KB/s at mcumgr's
     # default); empty = mcumgr's default
-    [string]$Mtu = '1024'
+    [string]$Mtu = '1024',
+    # Only reset: the factory MCUboot can't be left otherwise, short of
+    # removing power
+    [switch]$Reset
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,11 +43,12 @@ function Fail([string]$Message) {
 }
 
 # Never pick an image implicitly
-if (-not $File -and -not $Shield) {
+if (-not $File -and -not $Shield -and -not $Reset) {
     Write-Host @'
 Usage:
   .\flash.ps1 -Shield <shield> [-Snippet <snippet>] [-Port COMx]
   .\flash.ps1 -File <image.signed.bin> [-Port COMx]
+  .\flash.ps1 -Reset [-Port COMx]   leave the bootloader without flashing
   Optional: -Mtu <bytes>, SMP packet size (default 1024, '' for mcumgr's)
 
 Enter the bootloader first: hold the pairing button while plugging in USB, or
@@ -58,11 +63,13 @@ Enter the bootloader first: hold the pairing button while plugging in USB, or
     exit 1
 }
 
-if (-not $File) {
+if ($Reset) {
+    $File = ''
+} elseif (-not $File) {
     $artifact = if ($Snippet) { "$Shield-$Snippet" } else { $Shield }
     $File = Join-Path $PSScriptRoot "out\$artifact.signed.bin"
 }
-if (-not (Test-Path $File)) { Fail "Image not found: $File (run .\flash.ps1 to list images)" }
+if ($File -and -not (Test-Path $File)) { Fail "Image not found: $File (run .\flash.ps1 to list images)" }
 
 if (-not (Get-Command mcumgr -ErrorAction SilentlyContinue)) {
     Fail 'mcumgr not found on PATH. Install it with: go install github.com/apache/mynewt-mcumgr-cli/mcumgr@latest'
@@ -101,8 +108,10 @@ try {
 
 $conn = "dev=$Port,baud=115200"
 if ($Mtu) { $conn += ",mtu=$Mtu" }
-Write-Host "Uploading $File to $Port"
-& mcumgr --conntype serial --connstring $conn image upload $File
-if ($LASTEXITCODE -ne 0) { Fail 'mcumgr upload failed' }
+if ($File) {
+    Write-Host "Uploading $File to $Port"
+    & mcumgr --conntype serial --connstring $conn image upload $File
+    if ($LASTEXITCODE -ne 0) { Fail 'mcumgr upload failed' }
+}
 & mcumgr --conntype serial --connstring $conn reset
 if ($LASTEXITCODE -ne 0) { Fail 'mcumgr reset failed' }

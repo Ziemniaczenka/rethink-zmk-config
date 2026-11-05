@@ -4,6 +4,18 @@ ZMK firmware for the [ReThink Keyboard](https://github.com/Ziemniaczenka/ReThink
 
 > Work in progress. So far only the tester shields exist: `rethink_bare_tester` and `rethink_hw_tester`.
 
+## Roadmap
+
+- [x] Container build (local and CI), flashing over USB, bare Control Board tester
+- [x] Adapter control, backlight power chain and interlock, hardware options (`config/rethink.conf`)
+- [ ] Power: off in wired mode without USB, fuel gauge fixes (framework-cb)
+- [ ] Control Board LEDs: RGB as charging indicator, battery level and charging animation on the white LEDs
+- [ ] Key matrix: open-drain columns for diodeless ThinkPad matrices, ghost-key blocking, expander columns DRV15-17 with fewer I2C transfers (patched PCAL64xxA driver), HOTKEY/PWRSWITCH through the expander interrupt, matrix tester, transform generator
+- [ ] TrackPoint: power and reset sequencing, PS/2 driver
+- [ ] Shields: `rethink_t420`, `rethink_t430`, `rethink_t480`, `rethink_l14`
+- [ ] Backlight on the adapter: current (`CONFIG_RETHINK_BACKLIGHT_MAX_DUTY`), PWM frequency
+- [ ] Fuel gauge model of the real battery
+
 ## Software stack
 
 All pinned by commit in [config/west.yml](config/west.yml):
@@ -14,7 +26,7 @@ All pinned by commit in [config/west.yml](config/west.yml):
 | Zephyr | [FrameworkComputer/zephyr#2](https://github.com/FrameworkComputer/zephyr/pull/2) | Zephyr 4.5 with the `framework_wireless_tp_kb` board |
 | framework-cb | [Ziemniaczenka/zmk-config-fw-cb](https://github.com/Ziemniaczenka/zmk-config-fw-cb), fork of [Shaedil/zmk-config-fw-cb](https://github.com/Shaedil/zmk-config-fw-cb) | ZMK board variant `framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk`: USB HID on Zephyr's `device_next` stack, USB/Bluetooth mode switch, charger, fuel gauge, watchdog, MCUboot signing, and the patches that let ZMK #3387 build on Zephyr 4.5 |
 
-The patches from framework-cb (and from `patches/` here, if any) are applied to the ZMK and Zephyr checkouts at build time. Nothing is edited by hand.
+The patches from framework-cb (its README says what each one does) and from `patches/` here, if any, are applied to the ZMK and Zephyr checkouts at build time. Nothing is edited by hand.
 
 ## Requirements (Windows)
 
@@ -37,6 +49,7 @@ No Zephyr SDK, Python or west on the host. Builds run in the image from [docker/
 .\build.ps1 -Menuconfig                       # menuconfig of the last build
 .\build.ps1 -Shell                            # bash inside the build container
 .\build.ps1 -RebuildImage                     # rebuild the Docker image
+.\build.ps1 -FrameworkCb ..\zmk-config-fw-cb  # build with a local framework-cb checkout
 .\build.ps1 -CmakeArgs "-DCONFIG_ZMK_SLEEP=y" # extra CMake arguments
 .\build.ps1 -Snippet rethink-usb-log -Flash   # build, then flash (see Flashing)
 ```
@@ -88,7 +101,10 @@ The board ships with MCUboot with USB serial recovery:
 .\flash.ps1 -File path\to\image.signed.bin
 .\flash.ps1 -Shield rethink_bare_tester -Port COM7              # explicit port
 .\build.ps1 -Snippet rethink-usb-log -Flash                     # build, then flash that image
+.\flash.ps1 -Reset                                              # leave the bootloader without flashing
 ```
+
+The factory MCUboot can only be left by a reset command over the port (`-Reset`) or by removing power: the pairing button and the mode switch do nothing in recovery. Framework's `daisy` branch can leave recovery when a switch moves (`BOOT_SERIAL_EXIT_GPIO`, 2026-10-16), but the keyboard board doesn't enable it yet.
 
 `flash.ps1` sends 1024-byte SMP packets (`-Mtu 1024`, about 4 KB/s). mcumgr's default packet size gives about 1 KB/s; use `-Mtu ''` to fall back to it.
 
@@ -122,6 +138,7 @@ Both log at ZMK debug level.
 | `CONFIG_RETHINK_TP1_SUPPLY_5V` / `_3V3` | 5V | Adapter JP6 (+ JP4, JP5) | For the TrackPoint support (not implemented yet) |
 | `CONFIG_RETHINK_TP2_SUPPLY_3V3` / `_5V` | 3V3 | Adapter JP7 (+ JP8, JP9) | For the TrackPoint support |
 | `CONFIG_RETHINK_TP2_RESET_PULL_UP` / `_DOWN` | pull-up | Adapter R22 / R23 | For the TrackPoint support |
+| `CONFIG_RETHINK_MCUBOOT_NEEDS_POWER_CYCLE` | y | Factory MCUboot (Framework's daisy branch before 2026-10-16) | The recovery hold power-cycles through the nPM1300; n: soft reset |
 
 The expander pin map, the jumpers and which keyboard uses which pin are in the hardware repository: [docs/pinouts/io_expander.md](https://github.com/Ziemniaczenka/ReThink_Keyboard/blob/main/docs/pinouts/io_expander.md).
 
@@ -138,6 +155,7 @@ Tests a bare Control Board; no adapter needed.
 - **USB/Bluetooth switch** (P3.05, outside the matrix): Bluetooth sends over Bluetooth, falling back to USB when no host is connected. Wired turns Bluetooth off and sends over USB.
 - **White LEDs 1-4:** show the active Bluetooth profile (4 profiles) for 3 s after boot and after each change, blinking while the profile is unpaired.
 - **RGB LED:** blue while connected to a host.
+- **Power off in wired mode:** with the switch on wired and no USB power (running from the battery), the board switches all LEDs off and enters System OFF after 3 s. Only plugging in USB or moving the switch to Bluetooth wakes it; the pairing button and the keys do nothing while it is off.
 - **P3.11** (Framework's backlight PWM): disabled. On ReThink it enables the adapter's backlight boost converter.
 - **Name:** shows up as "ReThink Tester" over USB and Bluetooth.
 
@@ -186,6 +204,8 @@ Test on a bare Control Board (build with `-Snippet rethink-usb-log` to watch the
 | `CONFIG_RETHINK_PAIRING_BUTTON` | y | Pairing button: tap = next profile, hold = clear profile, triple tap = unlock backlight |
 | `CONFIG_RETHINK_PAIRING_BUTTON_HOLD_MS` | 3000 | Hold time to clear (on release) |
 | `CONFIG_RETHINK_PAIRING_BUTTON_RECOVERY_MS` | 10000 | Hold time to reboot into the bootloader, 0 = off |
+| `CONFIG_RETHINK_WIRED_OFF` | y | System OFF in wired mode while USB is unplugged |
+| `CONFIG_RETHINK_WIRED_OFF_DELAY_MS` | 3000 | Delay before powering off |
 | `CONFIG_RETHINK_PAIRING_BUTTON_TAP_WINDOW_MS` | 400 | Maximum gap between taps |
 | `CONFIG_RETHINK_PROFILE_LEDS` | y | Active profile on the white LEDs |
 | `CONFIG_RETHINK_PROFILE_LEDS_TIMEOUT_MS` | 3000 | How long the LED stays on |
@@ -196,6 +216,16 @@ Test on a bare Control Board (build with `-Snippet rethink-usb-log` to watch the
 Hardware options: see [Hardware options](#hardware-options).
 
 framework-cb adds `CONFIG_FRAMEWORK_CB_MODE_SWITCH`, `CONFIG_FRAMEWORK_CB_STATUS_LED`, `CONFIG_FRAMEWORK_CB_FUEL_GAUGE` and `CONFIG_FRAMEWORK_CB_WATCHDOG`. See its [README](https://github.com/Ziemniaczenka/zmk-config-fw-cb).
+
+### Changing framework-cb
+
+framework-cb is pinned to a commit of [the fork](https://github.com/Ziemniaczenka/zmk-config-fw-cb). To try changes before pushing them, build with a local checkout mounted over the pinned one:
+
+```powershell
+.\build.ps1 -Shield rethink_hw_tester -Snippet rethink-usb-log -FrameworkCb ..\zmk-config-fw-cb
+```
+
+`west update` is refused while it is mounted, since it would reset the checkout. Once the change is pushed to the fork, update its revision in `config/west.yml`.
 
 ## Updating pinned revisions
 
@@ -219,6 +249,6 @@ Firmware built from this repository also includes code that is not covered by th
 
 ## Disclaimers
 
-> Framework Control Board was provided pre-release by Framework Computer Inc. through the Control Board Developer Program.
+> Framework Control Board was provided pre-release by Framework Computer Inc. through Control Board Developer Program.
 
-> ThinkPad and TrackPoint are registered trademarks of Lenovo. ReThink is an independent open-source project and is not affiliated with, endorsed by, or certified by Lenovo Group Limited or Framework Computer Inc.
+> ThinkPad and TrackPoint are registered trademarks of Lenovo. ReThink is an independent open-source project and is not affiliated with, endorsed by, or certified by Lenovo Group Limited.

@@ -47,7 +47,9 @@ static bool ble_on(const char *action) {
 // checks its button after a power-on or pin reset, so a soft reset boots the
 // application again. A PMIC reset power-cycles the nRF instead.
 #define PMIC DT_NODELABEL(npm1300)
-#define USE_PMIC_RESET (DT_NODE_HAS_STATUS_OKAY(PMIC) && IS_ENABLED(CONFIG_MFD_NPM13XX))
+#define USE_PMIC_RESET                                                                             \
+    (IS_ENABLED(CONFIG_RETHINK_MCUBOOT_NEEDS_POWER_CYCLE) && DT_NODE_HAS_STATUS_OKAY(PMIC) &&      \
+     IS_ENABLED(CONFIG_MFD_NPM13XX))
 
 static void recovery(struct k_work *work) {
     // Still held at reset, so MCUboot enters USB serial recovery

@@ -13,6 +13,7 @@
     .\build.ps1 -Snippet rethink-usb-log -Pristine
     .\build.ps1 -Flash                            # build, then flash (see flash.ps1)
     .\build.ps1 -Shell                            # interactive shell in the container
+    .\build.ps1 -FrameworkCb ..\zmk-config-fw-cb  # use a local framework-cb checkout
 #>
 [CmdletBinding()]
 param(
@@ -25,6 +26,9 @@ param(
     [switch]$Menuconfig,
     [switch]$Shell,
     [switch]$RebuildImage,
+    # Local framework-cb checkout, mounted over the pinned one (to test changes
+    # before pushing them). west update is refused while it is mounted.
+    [string]$FrameworkCb = '',
     # Flash after building (hold the pairing button while plugging in USB)
     [switch]$Flash,
     # Serial port of MCUboot recovery; implies -Flash. Auto-detected if omitted.
@@ -58,6 +62,12 @@ $runArgs = @(
     '-e', "CMAKE_ARGS=$CmakeArgs",
     '-w', '/repo'
 )
+
+if ($FrameworkCb) {
+    $fcb = (Resolve-Path $FrameworkCb -ErrorAction Stop).Path
+    Write-Host "Using local framework-cb: $fcb"
+    $runArgs += @('-v', "${fcb}:/zmk-ws/modules/framework-cb", '-e', 'FRAMEWORK_CB_LOCAL=1')
+}
 
 if ($Shell -or $Menuconfig) {
     $runArgs += '-it'

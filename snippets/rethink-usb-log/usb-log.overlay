@@ -9,3 +9,9 @@
         zephyr,console = &cdc_acm_uart0;
     };
 };
+
+// Output written before a terminal opens the port waits here and anything
+// beyond it is dropped (default 1024); large enough for the boot log
+&cdc_acm_uart0 {
+    tx-fifo-size = <8192>;
+};

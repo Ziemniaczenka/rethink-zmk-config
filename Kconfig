@@ -75,6 +75,16 @@ config RETHINK_BACKLIGHT_MAX_DUTY
 	  Scales every brightness level to limit the backlight current drawn
 	  from VLED_BL. The defaults are not measured yet.
 
+config RETHINK_MCUBOOT_NEEDS_POWER_CYCLE
+	bool "Bootloader checks its button only after a power-on reset"
+	default y
+	help
+	  True for the factory MCUboot on the first Control Boards: Framework's
+	  daisy branch before commit c4a29622f1 (2026-10-16) skips the
+	  recovery button after a soft reset. The pairing button's recovery
+	  hold then power-cycles the board through the nPM1300 instead of a
+	  soft reset. Set n for boards with a newer bootloader.
+
 choice RETHINK_TP1_SUPPLY
 	prompt "Mezzanine/FFC1 pointing stick supply (adapter JP6, JP4, JP5)"
 	default RETHINK_TP1_SUPPLY_5V
@@ -150,9 +160,9 @@ config RETHINK_PAIRING_BUTTON_RECOVERY_MS
 	help
 	  Resets while the button is still held, so MCUboot sees it and
 	  enters USB serial recovery. Needed with a battery connected, where
-	  plugging in USB does not reset the board. Uses an nPM1300 reset
-	  (power cycle), since the factory MCUboot ignores the button after a
-	  soft reset; falls back to a soft reset without the PMIC.
+	  plugging in USB does not reset the board. With
+	  RETHINK_MCUBOOT_NEEDS_POWER_CYCLE this is an nPM1300 reset (power
+	  cycle), otherwise a soft reset.
 
 config RETHINK_PAIRING_BUTTON_TAP_WINDOW_MS
 	int "Maximum gap between taps of a multi-tap (ms)"
@@ -175,6 +185,27 @@ config RETHINK_PROFILE_LEDS_TIMEOUT_MS
 	int "Time the profile LED stays on (ms)"
 	default 3000
 	depends on RETHINK_PROFILE_LEDS
+
+config RETHINK_WIRED_OFF
+	bool "Power off in wired mode while USB is unplugged"
+	default y
+	depends on ZMK_USB
+	depends on $(dt_nodelabel_enabled,protocol_switch)
+	depends on $(dt_nodelabel_enabled,pairing_button)
+	select POWEROFF
+	select PM_DEVICE
+	help
+	  With the mode switch on USB and no USB power, the keyboard switches
+	  off its LEDs and backlight and enters System OFF. Only plugging in
+	  USB or moving the switch to Bluetooth wakes it; keys and the pairing
+	  button are ignored so stray presses don't drain the battery.
+
+config RETHINK_WIRED_OFF_DELAY_MS
+	int "Delay before powering off (ms)"
+	default 3000
+	depends on RETHINK_WIRED_OFF
+	help
+	  Also covers the time USB needs to report VBUS after boot.
 
 DT_COMPAT_RETHINK_ADAPTER_CTRL := rethink,adapter-ctrl
 
