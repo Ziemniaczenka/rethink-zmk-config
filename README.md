@@ -119,9 +119,10 @@ Images are signed with MCUboot's public development key (`root-ed25519.pem`), wh
 | Snippet | Output | Notes |
 | --- | --- | --- |
 | `rethink-usb-log` | Second USB serial port next to the keyboard | Disables ZMK Studio (same CDC ACM port). Messages from before the port is opened may be lost. |
+| `rethink-usb-shell` | Same port, as a Zephyr shell with the log | As `rethink-usb-log`, plus the `adapter` bring-up commands and the `i2c` and `gpio` shells. See [Adapter bring-up shell](#adapter-bring-up-shell). |
 | `framework-cb-uart-log` | Header UART: TX P2.02, RX P2.00, 115200 baud | Keeps the UART receiver on (battery drain). |
 
-Both log at ZMK debug level.
+All of them log at ZMK debug level.
 
 ## Hardware options
 
@@ -164,9 +165,10 @@ Tests a bare Control Board; no adapter needed.
 Tests the ReThink adapter. Everything from `rethink_bare_tester`, plus the following:
 
 - **Adapter detection:** probes the PCAL6416A at 0x20 on `i2c22` (first switching on TP_3V3 if the expander runs from it, JP10 2-3). If it doesn't answer, it logs `ReThink adapter not found` and carries on without it.
-- **Status LEDs** *(needs adapter)*: all five, as on an FFC2 keyboard with a numpad. At boot, Fn lock/power, mute, mic mute, Caps Lock and Num Lock light one after another, then all together, then go off. After that, Caps Lock and Num Lock follow the host's lock state. A lit LED pulls its expander pin low; an unlit one leaves it high-impedance.
+- **Status LEDs** *(needs adapter)*: all five, as on an FFC2 keyboard with a numpad. At boot, Fn lock/power, mute, mic mute, Caps Lock and Num Lock light one after another, then all together, then go off. After that, Caps Lock and Num Lock follow the host's lock state. A lit LED pulls its expander pin low; an unlit one rests on the expander's pull-up.
+- **Idle expander pins** *(needs adapter)*: every pin nothing drives rests on the expander's pull-up (`idle-gpios` in `rethink_adapter.dtsi`), also in System OFF, since a floating input draws up to 80 µA from LED_3V3.
 - **Backlight power chain:** nPM1300 BUCK1 (if it is the VLED_BL source) → P3.11 (VLED_BL to the adapter) → BOOST_EN (expander P0_1) → PWM 4096 Hz on P1.17, duty cycle = brightness × `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY`. The chain is on only while the brightness is above 0.
-- **Backlight interlock:** at boot, KBD_BL_DTCT (expander P1_7) is read once with the pull-up enabled; a backlit keyboard pulls it low. Without a detected backlit keyboard (or without the adapter), the backlight stays locked and logs `Backlight locked`. Triple-press the pairing button to unlock it until reboot.
+- **Backlight interlock:** at boot, KBD_BL_DTCT (expander P1_7) is read once with the pull-up enabled; a backlit keyboard pulls it low. The pull-up then stays on unless the pin is low. Without a detected backlit keyboard (or without the adapter), the backlight stays locked and logs `Backlight locked`. Triple-press the pairing button to unlock it until reboot.
 - **Keymap:** row 0 (KSI0) × KSO0..4 are backlight toggle, down (20 % steps), up, Caps Lock and Num Lock. All other positions are as in `rethink_bare_tester`. The backlight starts on at 40 %.
 - **Name:** "ReThink HW Test" (BLE names are limited to 16 characters).
 
@@ -175,6 +177,25 @@ Test on a bare Control Board (build with `-Snippet rethink-usb-log` to watch the
 1. Boot. The log shows `ReThink adapter not found`, `Ready: VLED_BL from BUCK1, max duty 60%`, then `Backlight locked: backlit keyboard unknown`.
 2. Triple-press the pairing button. The log shows `Backlight unlocked`, `Adapter missing: BOOST_EN not driven` and `Power chain on`. VLED_BL is now on the 6-pin connector, and P1.17 (KSO17 on the header) carries 40 % × 60 % = 24 % PWM, which reads about 0.8 V on a multimeter.
 3. Short KSI0 to KSO1 (down) or KSO2 (up) to change the duty cycle; KSO0 toggles the backlight. Off logs `Power chain off`, and VLED_BL and PWM drop to 0.
+
+#### Adapter bring-up shell
+
+Build with `.\build.ps1 -Shield rethink_hw_tester -Snippet rethink-usb-shell` and open the board's USB serial port in a terminal program. The `adapter` commands switch the adapter's supplies one at a time, for an adapter without a keyboard. They bypass the backlight interlock, so don't use them with a keyboard connected. The full procedure, with expected readings, is [docs/adapter_bringup.md](https://github.com/Ziemniaczenka/ReThink_Keyboard/blob/main/docs/adapter_bringup.md) in the hardware repository.
+
+| Command | Does |
+| --- | --- |
+| `adapter status` | TP_3V3, VLED_BL, INT and the level of every expander pin |
+| `adapter tp on\|off` | TP_3V3 (P3.12), off from boot. `off` sets PUMP_EN low first |
+| `adapter pump on\|off` | PUMP_EN: charge pump TP_5V. `on` is refused while TP_3V3 is off: the LM2775's EN must stay within 0.3 V of its supply |
+| `adapter vled on\|off` | VLED_BL to the adapter: BUCK1 (if it is the source) and P3.11 |
+| `adapter boost on\|off` | BOOST_EN: backlight boost BL_5V (needs VLED_BL) |
+| `adapter pwm <0-100>` | Duty cycle on P1.17, limited to `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY` |
+| `adapter pin <name> 0\|1\|z\|u` | An expander pin driven low or high, released, or released with its 100 kΩ pull-up. Names as in `adapter status` |
+| `adapter in` | HOTKEY, PWRSWITCH and KBD_BL_DTCT, read with pull-ups |
+| `adapter int [s]` | Waits for INT (P3.06) while an input is shorted to GND, then checks that reading the inputs releases it |
+| `adapter shorts` | Drives the 40 lines to the keyboard connectors low one at a time and reports lines that follow (shorted) or are low at rest. The matrix is suspended meanwhile |
+
+Zephyr's `i2c` and `gpio` shells are included too, e.g. `i2c scan i2c@c8000` (only 0x20 should answer).
 
 ## Repository layout
 
@@ -189,12 +210,14 @@ Test on a bare Control Board (build with `-Snippet rethink-usb-log` to watch the
 ├── config/rethink.conf          Hardware options (jumpers, fitted parts)
 ├── zephyr/module.yml            This repository as a Zephyr module
 ├── CMakeLists.txt, Kconfig      Module sources and options (CONFIG_RETHINK_*)
-├── src/                         Pairing button, profile LEDs, adapter control, backlight
+├── src/                         Pairing button, profile LEDs, adapter control and its
+│                                bring-up commands, backlight, wired power-off
 ├── include/rethink/             Public API (adapter.h, backlight.h)
 ├── dts/bindings/                rethink,adapter-ctrl and rethink,backlight
 ├── boards/shields/              Shields; rethink_common/ holds the shared dtsi files
 │                                (Control Board, adapter, backlight, header matrix)
-└── snippets/rethink-usb-log/    USB CDC ACM logging
+└── snippets/                    rethink-usb-log (USB CDC ACM logging),
+                                 rethink-usb-shell (shell and log on the same port)
 ```
 
 ## Kconfig options
@@ -211,6 +234,7 @@ Test on a bare Control Board (build with `-Snippet rethink-usb-log` to watch the
 | `CONFIG_RETHINK_PROFILE_LEDS_TIMEOUT_MS` | 3000 | How long the LED stays on |
 | `CONFIG_RETHINK_ADAPTER` | if `rethink,adapter-ctrl` in DT | Adapter bring-up, status LEDs, BOOST_EN, KBD_BL_DTCT |
 | `CONFIG_RETHINK_ADAPTER_LED_SELFTEST` | n | Light each status LED in turn at boot |
+| `CONFIG_RETHINK_ADAPTER_TEST` | n | `adapter` shell commands for bring-up (set by the `rethink-usb-shell` snippet) |
 | `CONFIG_RETHINK_BACKLIGHT` | if `rethink,backlight` in DT | Backlight power chain, PWM and interlock (use with `CONFIG_ZMK_BACKLIGHT`) |
 
 Hardware options: see [Hardware options](#hardware-options).

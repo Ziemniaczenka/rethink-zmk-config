@@ -58,6 +58,11 @@ static const struct gpio_dt_spec boost_en = GPIO_DT_SPEC_INST_GET(0, boost_en_gp
 static const struct gpio_dt_spec bl_detect = GPIO_DT_SPEC_INST_GET(0, bl_detect_gpios);
 #endif
 
+#if DT_INST_NODE_HAS_PROP(0, idle_gpios)
+#define IDLE_SPEC(node_id, prop, idx) GPIO_DT_SPEC_GET_BY_IDX(node_id, prop, idx),
+static const struct gpio_dt_spec idle_pins[] = {DT_INST_FOREACH_PROP_ELEM(0, idle_gpios, IDLE_SPEC)};
+#endif
+
 // Absent LEDs keep a NULL port
 #define LED_SPEC(prop) GPIO_DT_SPEC_INST_GET_OR(0, prop, {0})
 
@@ -108,7 +113,7 @@ int rethink_adapter_boost_set(bool on) {
 }
 
 #if DT_INST_NODE_HAS_PROP(0, bl_detect_gpios)
-// Pull-up on, sample, pull-up off: keeps the pin passive afterwards
+// Sampled with the pull-up; park_pins() then sets its resting state
 static enum rethink_bl_detect sample_bl_detect(void) {
     int err = gpio_pin_configure(bl_detect.port, bl_detect.pin, GPIO_INPUT | GPIO_PULL_UP);
     if (err) {
@@ -118,7 +123,6 @@ static enum rethink_bl_detect sample_bl_detect(void) {
 
     k_busy_wait(1000);
     int level = gpio_pin_get_raw(bl_detect.port, bl_detect.pin);
-    gpio_pin_configure(bl_detect.port, bl_detect.pin, GPIO_INPUT);
 
     if (level < 0) {
         LOG_ERR("Failed to read KBD_BL_DTCT (%d)", level);
@@ -129,9 +133,62 @@ static enum rethink_bl_detect sample_bl_detect(void) {
 }
 #endif
 
-// Sink when lit, high-impedance otherwise. Physical levels, flags ignored.
+// Sink when lit. Unlit, the pull-up holds the pin at U1's supply, which is
+// also the LEDs' supply: no current through the LED, and the input doesn't
+// sit ~1.2 V below VDD(P), where U1 draws extra current (datasheet 9.1).
+// Physical levels, flags ignored.
 static int led_apply(const struct gpio_dt_spec *spec, bool on) {
-    return gpio_pin_configure(spec->port, spec->pin, on ? GPIO_OUTPUT_LOW : GPIO_INPUT);
+    return gpio_pin_configure(spec->port, spec->pin,
+                              on ? GPIO_OUTPUT_LOW : GPIO_INPUT | GPIO_PULL_UP);
+}
+
+// Every pin nothing drives gets a defined level. A floating input draws up
+// to 80 µA (U1 datasheet, ΔIDD); an adapter without a keyboard drew 0.5 mA
+// from LED_3V3, which stays on in System OFF. A pull-up costs current only
+// while something holds its pin low: KBD_BL_DTCT keeps its pull-up unless a
+// backlit keyboard grounds it.
+static int park_pins(void) {
+    int err;
+
+#if DT_INST_NODE_HAS_PROP(0, idle_gpios)
+    for (size_t i = 0; i < ARRAY_SIZE(idle_pins); i++) {
+        err = gpio_pin_configure_dt(&idle_pins[i], GPIO_INPUT);
+        if (err) {
+            LOG_ERR("Failed to park expander pin %u (%d)", idle_pins[i].pin, err);
+            return err;
+        }
+    }
+#endif
+
+#if DT_INST_NODE_HAS_PROP(0, bl_detect_gpios)
+    err = gpio_pin_configure(bl_detect.port, bl_detect.pin,
+                             bl_state == RETHINK_BL_PRESENT ? GPIO_INPUT
+                                                            : GPIO_INPUT | GPIO_PULL_UP);
+    if (err) {
+        LOG_ERR("Failed to configure KBD_BL_DTCT (%d)", err);
+        return err;
+    }
+#endif
+
+    for (size_t i = 0; i < RETHINK_LED_COUNT; i++) {
+        if (leds[i].port == NULL) {
+            continue;
+        }
+
+        err = led_apply(&leds[i], false);
+        if (err) {
+            LOG_ERR("Failed to configure %s LED (%d)", led_names[i], err);
+            return err;
+        }
+    }
+
+    return 0;
+}
+
+void rethink_adapter_park(void) {
+    if (ready) {
+        park_pins();
+    }
 }
 
 int rethink_adapter_led_set(enum rethink_led led, bool on) {
@@ -193,11 +250,7 @@ void rethink_adapter_power_down(void) {
     k_work_cancel_delayable(&selftest_work);
 #endif
 
-    for (size_t i = 0; i < RETHINK_LED_COUNT; i++) {
-        if (leds[i].port != NULL) {
-            led_apply(&leds[i], false);
-        }
-    }
+    park_pins();
 
 #if HAS_PUMP_EN
     gpio_pin_set_dt(&pump_en, 0);
@@ -252,16 +305,8 @@ static int adapter_init(void) {
     bl_state = sample_bl_detect();
 #endif
 
-    for (size_t i = 0; i < RETHINK_LED_COUNT; i++) {
-        if (leds[i].port == NULL) {
-            continue;
-        }
-
-        err = led_apply(&leds[i], false);
-        if (err) {
-            LOG_ERR("Failed to configure %s LED (%d)", led_names[i], err);
-            return 0;
-        }
+    if (park_pins()) {
+        return 0;
     }
 
     ready = true;

@@ -40,6 +40,10 @@ int rethink_adapter_led_set(enum rethink_led led, bool on);
 
 const char *rethink_adapter_led_name(enum rethink_led led);
 
-// Before System OFF: status LEDs off, pump and boost disabled, TP_3V3 released.
-// The expander keeps its outputs while the Control Board is off.
+// Pins nothing drives back to their resting levels (idle-gpios, KBD_BL_DTCT),
+// status LEDs off. For code that reconfigured them, such as the bring-up tests.
+void rethink_adapter_park(void);
+
+// Before System OFF: pins parked as above, pump and boost disabled, TP_3V3
+// released. The expander keeps its outputs while the Control Board is off.
 void rethink_adapter_power_down(void);

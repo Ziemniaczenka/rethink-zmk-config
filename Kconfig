@@ -232,6 +232,16 @@ config RETHINK_ADAPTER_INIT_PRIORITY
 config RETHINK_ADAPTER_LED_SELFTEST
 	bool "Light each status LED in turn at boot"
 
+config RETHINK_ADAPTER_TEST
+	bool "Adapter bring-up shell commands"
+	depends on SHELL
+	select PM_DEVICE
+	help
+	  The "adapter" shell command, for an adapter without a keyboard:
+	  supplies and enables one at a time, expander pins, the INT line and
+	  a test for shorts between the lines to the keyboard connectors. The
+	  rethink-usb-shell snippet enables it.
+
 module = RETHINK_ADAPTER
 module-str = ReThink adapter
 source "subsys/logging/Kconfig.template.log_config"

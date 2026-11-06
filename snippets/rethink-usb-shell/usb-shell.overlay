@@ -1,0 +1,18 @@
+/*
+ * Copyright (c) 2026 Ziemniaczenka
+ * SPDX-License-Identifier: MIT
+ */
+
+// cdc_acm_uart0 is defined under &zephyr_udc0 by framework-cb's board variant
+/ {
+    chosen {
+        zephyr,console = &cdc_acm_uart0;
+        zephyr,shell-uart = &cdc_acm_uart0;
+    };
+};
+
+// Output written before a terminal opens the port waits here and anything
+// beyond it is dropped (default 1024); large enough for the boot log
+&cdc_acm_uart0 {
+    tx-fifo-size = <8192>;
+};

@@ -44,14 +44,25 @@ properties:
       TPS610333 backlight boost enable (BL_5V). Driven low at init, unless
       CONFIG_RETHINK_BOOST_EN_TIED (JP2 closed).
 
+  idle-gpios:
+    type: phandle-array
+    description: |
+      Expander pins that nothing else drives, each with the pull it rests on
+      (GPIO_PULL_UP or GPIO_PULL_DOWN). Set as inputs at init and before
+      System OFF, then the pins of the properties above and below are set up
+      as those describe, so the list may include them. A floating input draws
+      up to 80 µA. Leave out pins with an external pull to another supply
+      (TP1_RST, TP2_RST).
+
   bl-detect-gpios:
     type: phandle-array
     description: |
-      KBD_BL_DTCT. Sampled once at init with the pull-up enabled, then the
-      pull-up is disabled again. Low means a backlit keyboard is connected.
+      KBD_BL_DTCT. Sampled once at init with the pull-up enabled; low means a
+      backlit keyboard is connected. The pull-up then stays on, unless the
+      keyboard holds the pin low.
 
-  # Status LED sinks. A lit LED pulls the pin low; an unlit one leaves it
-  # high-impedance (open-drain emulation, since the PCAL64xxA driver rejects
+  # Status LED sinks. A lit LED pulls the pin low; an unlit one rests on the
+  # pull-up (open-drain emulation, since the PCAL64xxA driver rejects
   # GPIO_OPEN_DRAIN). Pin flags are ignored.
   pwr-led-gpios:
     type: phandle-array

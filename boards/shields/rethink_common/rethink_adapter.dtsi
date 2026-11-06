@@ -32,6 +32,24 @@
         tp-power-supply = <&tp_power>;
         pump-en-gpios = <&rethink_expander 0 GPIO_ACTIVE_HIGH>;
         boost-en-gpios = <&rethink_expander 1 GPIO_ACTIVE_HIGH>;
+        // Every pin except the enables and TP1/TP2_RST (R14/R22 pull them to
+        // their own supplies). Keyboard lines are open or switch to GND, LED
+        // lines go to LEDs from LED_3V3: the pull-ups draw nothing at rest.
+        // A shield whose keyboard holds one of these low replaces the list,
+        // with that pin on GPIO_PULL_DOWN (33 µA saved): T60 Mezzanine 36 on
+        // LEDMICMUTE is GND; check KBD_ID (DRV16) on the T480.
+        idle-gpios = <&rethink_expander 2 GPIO_PULL_UP>,  // P0_2 HOTKEY
+                     <&rethink_expander 3 GPIO_PULL_UP>,  // P0_3 PWRSWITCH
+                     <&rethink_expander 4 GPIO_PULL_UP>,  // P0_4 DRV15
+                     <&rethink_expander 5 GPIO_PULL_UP>,  // P0_5 DRV16
+                     <&rethink_expander 6 GPIO_PULL_UP>,  // P0_6 DRV17
+                     <&rethink_expander 7 GPIO_PULL_UP>,  // P0_7 OUT1 (J9)
+                     <&rethink_expander 10 GPIO_PULL_UP>, // P1_2 LEDPWR
+                     <&rethink_expander 11 GPIO_PULL_UP>, // P1_3 LEDMUTE
+                     <&rethink_expander 12 GPIO_PULL_UP>, // P1_4 LEDMICMUTE
+                     <&rethink_expander 13 GPIO_PULL_UP>, // P1_5 LEDCPSLOCK
+                     <&rethink_expander 14 GPIO_PULL_UP>, // P1_6 LEDNUMLOCK
+                     <&rethink_expander 15 GPIO_PULL_UP>; // P1_7 KBD_BL_DTCT
     };
 };
 
