@@ -51,8 +51,9 @@ properties:
       (GPIO_PULL_UP or GPIO_PULL_DOWN). Set as inputs at init and before
       System OFF, then the pins of the properties above and below are set up
       as those describe, so the list may include them. A floating input draws
-      up to 80 µA. Leave out pins with an external pull to another supply
-      (TP1_RST, TP2_RST).
+      up to 80 µA. A pin pulled up externally to a supply that can be off
+      floats with that supply: give it GPIO_PULL_DOWN (TP1_RST, TP2_RST).
+      Leave out pins a jumper may tie to a supply (PUMP_EN, BOOST_EN).
 
   bl-detect-gpios:
     type: phandle-array

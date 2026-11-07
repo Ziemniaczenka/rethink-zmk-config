@@ -32,9 +32,12 @@
         tp-power-supply = <&tp_power>;
         pump-en-gpios = <&rethink_expander 0 GPIO_ACTIVE_HIGH>;
         boost-en-gpios = <&rethink_expander 1 GPIO_ACTIVE_HIGH>;
-        // Every pin except the enables and TP1/TP2_RST (R14/R22 pull them to
-        // their own supplies). Keyboard lines are open or switch to GND, LED
-        // lines go to LEDs from LED_3V3: the pull-ups draw nothing at rest.
+        // Every pin except the enables, which JP1/JP2 may tie to TP_3V3/VIN.
+        // Keyboard lines are open or switch to GND, LED lines go to LEDs from
+        // LED_3V3: the pull-ups draw nothing at rest. TP1/TP2_RST: R14/R22
+        // pull them to TP1/TP2_PWR, which float while off (TP2_RST drew
+        // ~100 µA in System OFF); the pull-downs cost 30-45 µA through R14/R22
+        // only while the pointing stick is powered, and agree with R23.
         // A shield whose keyboard holds one of these low replaces the list,
         // with that pin on GPIO_PULL_DOWN (33 µA saved): T60 Mezzanine 36 on
         // LEDMICMUTE is GND; check KBD_ID (DRV16) on the T480.
@@ -44,6 +47,8 @@
                      <&rethink_expander 5 GPIO_PULL_UP>,  // P0_5 DRV16
                      <&rethink_expander 6 GPIO_PULL_UP>,  // P0_6 DRV17
                      <&rethink_expander 7 GPIO_PULL_UP>,  // P0_7 OUT1 (J9)
+                     <&rethink_expander 8 GPIO_PULL_DOWN>, // P1_0 TP1_RST
+                     <&rethink_expander 9 GPIO_PULL_DOWN>, // P1_1 TP2_RST
                      <&rethink_expander 10 GPIO_PULL_UP>, // P1_2 LEDPWR
                      <&rethink_expander 11 GPIO_PULL_UP>, // P1_3 LEDMUTE
                      <&rethink_expander 12 GPIO_PULL_UP>, // P1_4 LEDMICMUTE
