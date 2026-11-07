@@ -49,7 +49,7 @@ config RETHINK_BACKLIGHT_SUPPLY_BUCK1
 	bool "nPM1300 BUCK1, 3.3 V (R62 fitted, default)"
 	help
 	  BUCK1 is switched on with the backlight. The nPM1300 bucks deliver
-	  up to 200 mA, hence the lower RETHINK_BACKLIGHT_MAX_DUTY default.
+	  up to 200 mA.
 
 config RETHINK_BACKLIGHT_SUPPLY_VBAT
 	bool "Battery, VBAT (R59 fitted, R62 removed; Control Board rev. 1)"
@@ -68,12 +68,13 @@ endchoice
 
 config RETHINK_BACKLIGHT_MAX_DUTY
 	int "PWM duty cycle at full brightness (%)"
-	range 1 100
-	default 60 if RETHINK_BACKLIGHT_SUPPLY_BUCK1
-	default 100
+	range 1 10
+	default 10
 	help
 	  Scales every brightness level to limit the backlight current drawn
-	  from VLED_BL. The defaults are not measured yet.
+	  from VLED_BL. Capped at 10 % until real keyboards are measured: on
+	  BUCK1 the adapter's boost runs cleanly at 50 mA and fails at about
+	  106 mA.
 
 config RETHINK_MCUBOOT_NEEDS_POWER_CYCLE
 	bool "Bootloader checks its button only after a power-on reset"
@@ -185,6 +186,24 @@ config RETHINK_PROFILE_LEDS_TIMEOUT_MS
 	int "Time the profile LED stays on (ms)"
 	default 3000
 	depends on RETHINK_PROFILE_LEDS
+
+config RETHINK_CONNECTED_LED
+	bool "Light the blue LED for a while after connecting"
+	default y
+	depends on ZMK_BLE || ZMK_USB
+	depends on $(dt_nodelabel_enabled,led_b)
+	depends on !FRAMEWORK_CB_STATUS_LED
+	help
+	  Lights the blue LED when a host connects over USB or on the active
+	  Bluetooth profile, and on switching to a profile that is connected.
+	  It goes off after RETHINK_CONNECTED_LED_TIMEOUT_MS or on
+	  disconnecting. Replaces framework-cb's FRAMEWORK_CB_STATUS_LED (on
+	  while connected), which the rethink shields default to n.
+
+config RETHINK_CONNECTED_LED_TIMEOUT_MS
+	int "Time the blue LED stays on (ms)"
+	default 3000
+	depends on RETHINK_CONNECTED_LED
 
 config RETHINK_WIRED_OFF
 	bool "Power off in wired mode while USB is unplugged"

@@ -13,9 +13,10 @@ description: |
   vin-supply is only switched with CONFIG_RETHINK_BACKLIGHT_SUPPLY_BUCK1. With
   CONFIG_RETHINK_BOOST_FITTED=n the chain is never switched on.
 
-  Safety interlock: the chain stays off unless the adapter detected a backlit
-  keyboard (KBD_BL_DTCT low) or the user unlocked it with
-  rethink_backlight_unlock() (triple press of the pairing button).
+  Safety interlock: the chain stays off unless the adapter detects a backlit
+  keyboard (KBD_BL_DTCT low, read again each time the chain switches on) or
+  the user unlocked it with rethink_backlight_unlock() (triple press of the
+  pairing button).
 
 compatible: "rethink,backlight"
 

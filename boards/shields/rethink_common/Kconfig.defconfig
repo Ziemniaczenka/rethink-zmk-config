@@ -1,0 +1,11 @@
+# Copyright (c) 2026 Ziemniaczenka
+# SPDX-License-Identifier: MIT
+#
+# Defaults for every rethink_* shield. Zephyr reads the Kconfig.defconfig of
+# every folder under boards/shields, so this one needs no shield of its own,
+# and reads them before the modules' Kconfig files, so these defaults win.
+
+# framework-cb keeps the blue LED on while connected; RETHINK_CONNECTED_LED
+# lights it for a few seconds after connecting instead
+config FRAMEWORK_CB_STATUS_LED
+    default n

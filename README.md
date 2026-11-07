@@ -2,7 +2,7 @@
 
 ZMK firmware for the [ReThink Keyboard](https://github.com/Ziemniaczenka/ReThink_Keyboard): ThinkPad keyboard modules driven by the Framework Wireless Touchpad Keyboard Control Board (nRF54LM20A + nPM1300) through the ReThink adapter.
 
-> Work in progress. So far only the tester shields exist: `rethink_bare_tester` and `rethink_hw_tester`.
+> Work in progress. Shields so far: the testers `rethink_bare_tester` and `rethink_hw_tester`, the matrix scanner `rethink_scanner`, and the first keyboard, `rethink_l420`.
 
 ## Roadmap
 
@@ -10,15 +10,34 @@ ZMK firmware for the [ReThink Keyboard](https://github.com/Ziemniaczenka/ReThink
 - [x] Adapter control, backlight power chain and interlock, hardware options (`config/rethink.conf`)
 - [x] Power off in wired mode without USB; charger current fix (framework-cb)
 - [x] Adapter bring-up: `rethink-usb-shell` commands, idle expander pins on pulls (System OFF at the bare board's current)
+- [x] Key matrix: expander register access without Zephyr's PCAL64xxA driver (a column step is one 1-byte I2C write), open-drain columns for diodeless ThinkPad matrices, ghost-key blocking, expander columns DRV15-17, HOTKEY/PWRSWITCH through the expander interrupt. Tested with shorts on the connectors
+- [x] Matrix scanner: `rethink_scanner` and `scripts/matrix_scan.py`, which asks for each key, reads its row and column from the USB log, and writes the matrix transform and a keymap. First keyboard mapped: L420 (FFC1)
+- [x] Shield `rethink_l420` (FFC1): keymap from the scan, ISO, Fn layer per the keycaps; TrackPoint comes later
+- [x] Blue LED only for 3 s after connecting, not the whole time
+- [x] Matrix scans only the columns and direct keys the layout maps (the L420 skips DRV16/17 and HOTKEY/PWRSWITCH: two I2C transfers per scan instead of five)
 
 Next, in this order:
 
-- [ ] Key matrix: expander register access without Zephyr's PCAL64xxA driver (a column step is one 1-byte I2C write), open-drain columns for diodeless ThinkPad matrices, ghost-key blocking, expander columns DRV15-17, HOTKEY/PWRSWITCH through the expander interrupt
-- [ ] Matrix scanner: a raw 8×18 shield and a script that asks for each key, reads its row and column from the USB log, and writes the matrix transform and a keymap
-- [ ] Shield `rethink_t420`: the first real keyboard
+- [ ] Shield `rethink_t420` (Mezzanine)
 - [ ] TrackPoint: power and reset sequencing, PS/2 driver
-- [ ] Battery: fuel gauge model of the real cell, charge-current reading, discharge limit (200 mA, 1 A with the backlight), USB 1.5 A, low-battery cutoff
-- [ ] Backlight on a real keyboard (`rethink_t430`): current on BUCK1 (50 mA works, ~106 mA doesn't), `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY`, PWM frequency
+- [ ] Battery: fuel gauge model of the real cell (the "Example" model reads 50 % at 4155 mV), charge-current reading (fuel gauge +525 mA, meter 440 mA), discharge limit (200 mA, 1 A with the backlight), USB 1.5 A, low-battery cutoff
+- [ ] Idle current on Bluetooth. Measured on battery with a multimeter:
+
+  | Setup | Connected | Advertising |
+  | --- | --- | --- |
+  | `rethink_l420`, adapter and keyboard | 1.58 mA | |
+  | `rethink_l420`, adapter, no keyboard | 1.58 mA | 1.7 mA |
+  | `rethink_bare_tester`, bare Control Board | 1.6 mA | 1.7 mA |
+  | System OFF (wired mode, no USB) | 6-8 µA | |
+  | A key held (1 kHz scan with I2C, before the column skip above) | +1.2 mA | |
+
+  So a floor of about 1.5 mA comes from the Control Board and firmware, not the adapter or the matrix, and the radio adds little. In the USB log no connection-parameter update followed in 4 minutes (ZMK logs `interval N latency N` on one), so the host kept its own parameters. A tuned ZMK keyboard idles at tens to a few hundred µA, so about 1 mA is to be found. Next: a trace with a power profiler. Predictions, by what the trace would show:
+  - **Flat floor between radio events:** something stays on. Candidates: the USB controller and its regulator (`vregusb`, enabled in the board DT) without VBUS, the 32 MHz crystal held by a driver, or the CPU not sleeping. Check: a plain Zephyr BLE sample (`peripheral_hids`) on the same board. At ~1.5 mA too, it's the board or Zephyr; lower, it's ZMK or these modules.
+  - **Spikes every 4 s:** calibration of the RC 32 kHz clock (`CONFIG_CLOCK_CONTROL_NRF_K32SRC_RC_CALIBRATION`). The board DT sets up the 32 kHz crystal (`lfxo`); if it's fitted, use it, which also narrows the radio's receive windows.
+  - **Radio events every 7.5-30 ms while connected:** the host ignores ZMK's request for latency 30; request again or accept other parameters.
+  - **Advertising:** ZMK advertises every 30-60 ms for as long as no host is connected. Slow down after about 30 s (ZMK patch).
+  - Then `CONFIG_ZMK_SLEEP`: System OFF after some minutes untouched on Bluetooth too, waking on a key (rows and INT as wake sources).
+- [ ] Backlight on a real keyboard (`rethink_t430`): current on BUCK1 (50 mA works, ~106 mA doesn't), `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY` (capped at 10 % until then), PWM frequency
 - [ ] Control Board LEDs: PWM brightness control (RGB especially); RGB as charging indicator; battery level, charging and backlight-level animations on the white LEDs
 - [ ] Shields: `rethink_t480`, `rethink_l14`
 - [ ] Self-test after programming, for user-built boards: check the adapter (I2C) and other parts at boot and report a fault without a serial log, e.g. a sequence of red blinks
@@ -42,8 +61,9 @@ The patches from framework-cb (its README says what each one does) and from `pat
   ```powershell
   go install github.com/apache/mynewt-mcumgr-cli/mcumgr@latest
   ```
+- For the matrix scanner only: Python 3 with pyserial (`python -m pip install pyserial`)
 
-No Zephyr SDK, Python or west on the host. Builds run in the image from [docker/Dockerfile](docker/Dockerfile) (ZMK's `zmk-build-arm:4.4-branch` with Zephyr SDK 1.0.1, plus Zephyr 4.5's Python requirements and `imgtool`).
+No Zephyr SDK or west on the host. Builds run in the image from [docker/Dockerfile](docker/Dockerfile) (ZMK's `zmk-build-arm:4.4-branch` with Zephyr SDK 1.0.1, plus Zephyr 4.5's Python requirements and `imgtool`).
 
 ## Building
 
@@ -142,7 +162,7 @@ All of them log at ZMK debug level.
 | `CONFIG_RETHINK_BOOST_FITTED` | y | U4 (n on Mezz_no_BL, FFC1) | n: the backlight is never powered |
 | `CONFIG_RETHINK_BOOST_EN_TIED` | n | Adapter JP2 closed | BOOST_EN (P0_1) left as an input |
 | `CONFIG_RETHINK_BACKLIGHT_SUPPLY_BUCK1` / `_VBAT` / `_VSYS` | BUCK1 | Control Board R62 / R59 (VBAT) / VSYS on the next revision | BUCK1: the regulator is switched with the backlight |
-| `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY` | 60 (BUCK1), 100 (VBAT, VSYS) | | Duty cycle at 100 % brightness, to stay within the supply's current. Not measured yet. |
+| `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY` | 10 (range 1-10) | | Duty cycle at 100 % brightness, to stay within the supply's current. Capped at 10 % until real keyboards are measured |
 | `CONFIG_RETHINK_TP1_SUPPLY_5V` / `_3V3` | 5V | Adapter JP6 (+ JP4, JP5) | For the TrackPoint support (not implemented yet) |
 | `CONFIG_RETHINK_TP2_SUPPLY_3V3` / `_5V` | 3V3 | Adapter JP7 (+ JP8, JP9) | For the TrackPoint support |
 | `CONFIG_RETHINK_TP2_RESET_PULL_UP` / `_DOWN` | pull-up | Adapter R22 / R23 | For the TrackPoint support |
@@ -162,7 +182,7 @@ Tests a bare Control Board; no adapter needed.
 - **Pairing button** (P3.10, outside the matrix): tap for the next Bluetooth profile (acts 0.4 s after the tap, to tell it apart from a triple tap); hold for 3 s, then release, to clear the active profile. Both are ignored while the mode switch is on wired. Hold for 10 s to reboot into MCUboot recovery (keep holding until the green LED lights); holding it while plugging in USB also enters recovery.
 - **USB/Bluetooth switch** (P3.05, outside the matrix): Bluetooth sends over Bluetooth, falling back to USB when no host is connected. Wired turns Bluetooth off and sends over USB.
 - **White LEDs 1-4:** show the active Bluetooth profile (4 profiles) for 3 s after boot and after each change, blinking while the profile is unpaired.
-- **RGB LED:** blue while connected to a host.
+- **RGB LED:** blue for 3 s when a host connects (USB, or the active Bluetooth profile) and after switching to a connected profile.
 - **Power off in wired mode:** with the switch on wired and no USB power (running from the battery), the board switches all LEDs off and enters System OFF after 3 s. Only plugging in USB or moving the switch to Bluetooth wakes it; the pairing button and the keys do nothing while it is off.
 - **P3.11** (Framework's backlight PWM): disabled. On ReThink it enables the adapter's backlight boost converter.
 - **Name:** shows up as "ReThink Tester" over USB and Bluetooth.
@@ -171,24 +191,24 @@ Tests a bare Control Board; no adapter needed.
 
 Tests the ReThink adapter. Everything from `rethink_bare_tester` except its matrix, plus the following:
 
-- **Matrix:** the adapter's whole matrix (`rethink_adapter_matrix.dtsi`, driver `rethink,matrix`): SENSE0-7 by DRV0-14 on the Control Board and DRV15-17 on the expander, plus HOTKEY and PWRSWITCH as direct keys in row 8. Row r, column c = position r*18 + c; HOTKEY and PWRSWITCH are 144 and 145. Columns are open-drain and ghost keys are blocked, as diodeless ThinkPad matrices need. Every position sends a different key (see the keymap), and the log shows `position: N` for each press. Without a keyboard, short a SENSE pin to a DRV pin, e.g. on the Mezzanine connector SENSE0 (pin 5) to DRV15 (pin 30) for position 15, or HOTKEY (pin 1) to GND (pin 34) for 144. Without the adapter, the Control Board part still works on the header.
+- **Matrix:** the adapter's whole matrix (`rethink_adapter_matrix.dtsi`, driver `rethink,matrix`, with every position in `rethink_adapter_full_layout.dtsi`): SENSE0-7 by DRV0-14 on the Control Board and DRV15-17 on the expander, plus HOTKEY and PWRSWITCH as direct keys in row 8. Row r, column c = position r*18 + c; HOTKEY and PWRSWITCH are 144 and 145. Columns are open-drain and ghost keys are blocked, as diodeless ThinkPad matrices need. Every position sends a different key (see the keymap), and the log shows `position: N` for each press. Without a keyboard, short a SENSE pin to a DRV pin, e.g. on the Mezzanine connector SENSE0 (pin 5) to DRV15 (pin 30) for position 15, or HOTKEY (pin 1) to GND (pin 34) for 144. Without the adapter, the Control Board part still works on the header.
 - **Adapter detection:** probes the PCAL6416A at 0x20 on `i2c22` (first switching on TP_3V3 if the expander runs from it, JP10 2-3). If it doesn't answer, it logs `ReThink adapter not found` and carries on without it.
 - **Status LEDs** *(needs adapter)*: all five, as on an FFC2 keyboard with a numpad. At boot, Fn lock/power, mute, mic mute, Caps Lock and Num Lock light one after another, then all together, then go off. After that, Caps Lock and Num Lock follow the host's lock state. A lit LED pulls its expander pin low; an unlit one rests on the expander's pull-up.
 - **Idle expander pins** *(needs adapter)*: every pin nothing drives rests on the expander's pull-up (`idle-gpios` in `rethink_adapter.dtsi`), also in System OFF, since a floating input draws up to 80 µA from LED_3V3. TP1/TP2_RST rest on the pull-down instead: R14/R22 go to the pointing stick supplies, which float while off.
 - **Backlight power chain:** nPM1300 BUCK1 (if it is the VLED_BL source) → P3.11 (VLED_BL to the adapter) → BOOST_EN (expander P0_1) → PWM 4096 Hz on P1.17, duty cycle = brightness × `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY`. The chain is on only while the brightness is above 0.
-- **Backlight interlock:** at boot, KBD_BL_DTCT (expander P1_7) is read once with the pull-up enabled; a backlit keyboard pulls it low. The pull-up then stays on unless the pin is low. Without a detected backlit keyboard (or without the adapter), the backlight stays locked and logs `Backlight locked`. Triple-press the pairing button to unlock it until reboot.
+- **Backlight interlock:** KBD_BL_DTCT (expander P1_7) is read with the pull-up enabled at boot and again each time the backlight switches on; a backlit keyboard pulls it low. The pull-up then stays on unless the pin is low. Without a detected backlit keyboard (or without the adapter), the backlight stays locked and logs `Backlight locked`. Triple-press the pairing button to unlock it until reboot.
 - **Keymap:** row 0 (KSI0) × KSO0..4 are backlight toggle, down (20 % steps), up, Caps Lock and Num Lock. The backlight starts on at 40 %.
 - **Name:** "ReThink HW Test" (BLE names are limited to 16 characters).
 
 Test on a bare Control Board (build with `-Snippet rethink-usb-log` to watch the log):
 
-1. Boot. The log shows `ReThink adapter not found`, `Ready: VLED_BL from BUCK1, max duty 60%`, then `Backlight locked: backlit keyboard unknown`.
-2. Triple-press the pairing button. The log shows `Backlight unlocked`, `Adapter missing: BOOST_EN not driven` and `Power chain on`. VLED_BL is now on the 6-pin connector, and P1.17 (KSO17 on the header) carries 40 % × 60 % = 24 % PWM, which reads about 0.8 V on a multimeter.
+1. Boot. The log shows `ReThink adapter not found`, `Ready: VLED_BL from BUCK1, max duty 10%`, then `Backlight locked: backlit keyboard unknown`.
+2. Triple-press the pairing button. The log shows `Backlight unlocked`, `Adapter missing: BOOST_EN not driven` and `Power chain on`. VLED_BL is now on the 6-pin connector, and P1.17 (KSO17 on the header) carries 40 % × 10 % = 4 % PWM, which reads about 0.13 V on a multimeter.
 3. Short KSI0 to KSO1 (down) or KSO2 (up) to change the duty cycle; KSO0 toggles the backlight. Off logs `Power chain off`, and VLED_BL and PWM drop to 0.
 
 #### Adapter bring-up shell
 
-Build with `.\build.ps1 -Shield rethink_hw_tester -Snippet rethink-usb-shell` and open the board's USB serial port in a terminal program. The `adapter` commands switch the adapter's supplies one at a time, for an adapter without a keyboard. They bypass the backlight interlock, so don't use them with a keyboard connected. The full procedure, with expected readings, is [docs/adapter_bringup.md](https://github.com/Ziemniaczenka/ReThink_Keyboard/blob/main/docs/adapter_bringup.md) in the hardware repository.
+Build with `.\build.ps1 -Shield rethink_hw_tester -Snippet rethink-usb-shell` and open the board's USB serial port in a terminal program. The `adapter` commands switch the adapter's supplies one at a time, for an adapter without a keyboard. They bypass the backlight interlock, so don't use them with a keyboard connected, except `status`, `in`, `int` and `shorts`, which only read pins or pull single lines low. The full procedure, with expected readings, is [docs/adapter_bringup.md](https://github.com/Ziemniaczenka/ReThink_Keyboard/blob/main/docs/adapter_bringup.md) in the hardware repository.
 
 | Command | Does |
 | --- | --- |
@@ -205,12 +225,64 @@ Build with `.\build.ps1 -Shield rethink_hw_tester -Snippet rethink-usb-shell` an
 
 Zephyr's `i2c` and `gpio` shells are included too, e.g. `i2c scan i2c@c8000` (only 0x20 should answer). The `gpio` shell covers the Control Board ports only: the expander has no Zephyr GPIO driver (see `include/rethink/expander.h`).
 
+### `rethink_scanner`
+
+Maps a keyboard's matrix: which SENSE and DRV lines each key connects. Build it with the `rethink-usb-shell` snippet.
+
+- **Matrix:** the adapter's whole matrix, as in `rethink_hw_tester`. No key sends anything, so presses don't type into the host; the log shows `Row: r, col: c` for each.
+- **Nothing powered for the keyboard:** no backlight (BUCK1 stays off from boot), no status LEDs, TP_3V3 and the charge pump off. Of the `adapter` commands, use only `status`, `in`, `int` and `shorts` with a keyboard connected.
+- **Name:** "ReThink Scanner".
+
+Mapping a keyboard:
+
+1. With all power removed, connect the keyboard (checks: [First keyboard](https://github.com/Ziemniaczenka/ReThink_Keyboard/blob/main/docs/adapter_bringup.md#5-first-keyboard) in the bring-up procedure), then plug in USB.
+2. Optional: write a layout file. One line per physical row, keys left to right, as ZMK key codes; a key without one gets a label in brackets. For example:
+   ```text
+   ESC F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12
+   GRAVE N1 N2 N3 N4 N5 N6 N7 N8 N9 N0 MINUS EQUAL BSPC
+   [FN] LCTRL LGUI LALT SPACE RALT
+   ```
+3. Close any terminal on the board's serial port and run one of:
+   ```powershell
+   python scripts\matrix_scan.py --layout l420.txt   # asks for each key by name
+   python scripts\matrix_scan.py --name l420         # press the keys row by row, Enter ends a row
+   ```
+   The port is found by ZMK's USB IDs (otherwise `--port COMx`). On the PC's keyboard, Enter skips the key asked for, `u` undoes the last one and `q` finishes. After the layout, the script takes keys the layout missed as extras.
+4. The script prints which SENSE and DRV lines the keyboard uses and writes to `out\`: `<name>_transform.dtsi` (matrix transform in physical order), `<name>.keymap` (keymap skeleton: `&kp` for key codes, `&none` for labels), `<name>_scan.json` and the raw log.
+
+A keyboard shield includes `rethink_adapter_matrix.dtsi` without the full layout and defines its own physical layout with that transform, as `rethink_l420` does: ZMK sizes the keymap for the largest physical layout enabled. The matrix drives and reads only the columns and direct keys that an enabled transform maps, so a keyboard without keys on DRV16/17 or without HOTKEY/PWRSWITCH saves those I2C transfers on every scan.
+
+### `rethink_l420`
+
+ThinkPad L420 keyboard on FFC1 (30-pin matrix cable in J4). Mapped with `rethink_scanner` on two Norwegian L420 keyboards, and in use for typing.
+
+- **Everything from `rethink_bare_tester` except its matrix:** pairing button, USB/Bluetooth switch, profile LEDs, RGB LED, power off in wired mode.
+- **Matrix:** the adapter's matrix with the L420's 85 keys (ISO) as the physical layout `l420_layout`. Keys at other positions are ignored.
+- **Keymap:** each key sends the standard key code of its position, so the host's keyboard layout (e.g. Norwegian, Swedish, Danish) gives the legends. Fn (bottom left) does what the keycaps show, where a standard key code exists:
+
+  | Fn + | Sends |
+  | --- | --- |
+  | Esc, F1 | Break, SysRq (Alt+PrtSc) |
+  | F2, F4, F7 | Lock (Win+L), sleep, display (Win+P) |
+  | F9, F10, F11 | Scroll Lock, NmLk (embedded keypad on/off), Pause |
+  | Insert, Delete, Home | PrtSc, brightness down, brightness up |
+  | PgUp, PgDn | Browser back, forward |
+  | Up, Down, Left, Right | Stop, play/pause, previous, next |
+
+  Battery (F3), wireless (F5), camera (F6), pointing device (F8), hibernate (F12) and zoom (Space) have no standard key code. The embedded keypad sends the digits on 7-9, U-O, J-L and M, and `/ * - +` on 0, P, `;` and `/` (UK ISO legends), independent of the host's Num Lock.
+- **Not on this keyboard:** backlight (BUCK1 stays off from boot) and status LEDs; the expander's LED pins rest on their pull-ups.
+- **Not yet:** the TrackPoint (8-pin cable in J5) and its buttons, which go to the stick, not the matrix.
+- **Name:** "ReThink L420".
+
+Build with `-Snippet rethink-usb-log` to see `position: N` for each key in the log.
+
 ## Repository layout
 
 ```text
 .
 ├── build.ps1 / flash.ps1        Host scripts (Windows)
 ├── scripts/build.sh             Build steps, shared by build.ps1, dev container and CI
+├── scripts/matrix_scan.py       Maps a keyboard's matrix (rethink_scanner)
 ├── docker/                      Build image
 ├── .devcontainer/               VS Code dev container
 ├── .github/workflows/build.yml  CI, matrix in build.yaml
@@ -218,15 +290,15 @@ Zephyr's `i2c` and `gpio` shells are included too, e.g. `i2c scan i2c@c8000` (on
 ├── config/rethink.conf          Hardware options (jumpers, fitted parts)
 ├── zephyr/module.yml            This repository as a Zephyr module
 ├── CMakeLists.txt, Kconfig      Module sources and options (CONFIG_RETHINK_*)
-├── src/                         Pairing button, profile LEDs, adapter control, expander
+├── src/                         Pairing button, profile and blue LEDs, adapter control, expander
 │                                registers, matrix, bring-up commands, backlight,
 │                                wired power-off
 ├── include/rethink/             Public API (adapter.h, expander.h, backlight.h)
 ├── dts/bindings/                rethink,adapter-ctrl, rethink,pcal6416a, rethink,matrix
 │                                and rethink,backlight
 ├── boards/shields/              Shields; rethink_common/ holds the shared dtsi files
-│                                (Control Board, adapter, its matrix, backlight,
-│                                header matrix)
+│                                (Control Board, adapter, its matrix and full layout,
+│                                backlight, header matrix) and the shields' Kconfig defaults
 └── snippets/                    rethink-usb-log (USB CDC ACM logging),
                                  rethink-usb-shell (shell and log on the same port)
 ```
@@ -243,6 +315,8 @@ Zephyr's `i2c` and `gpio` shells are included too, e.g. `i2c scan i2c@c8000` (on
 | `CONFIG_RETHINK_PAIRING_BUTTON_TAP_WINDOW_MS` | 400 | Maximum gap between taps |
 | `CONFIG_RETHINK_PROFILE_LEDS` | y | Active profile on the white LEDs |
 | `CONFIG_RETHINK_PROFILE_LEDS_TIMEOUT_MS` | 3000 | How long the LED stays on |
+| `CONFIG_RETHINK_CONNECTED_LED` | y | Blue LED after connecting (replaces framework-cb's `CONFIG_FRAMEWORK_CB_STATUS_LED`, which the shields set to n) |
+| `CONFIG_RETHINK_CONNECTED_LED_TIMEOUT_MS` | 3000 | How long the blue LED stays on |
 | `CONFIG_RETHINK_ADAPTER` | if `rethink,adapter-ctrl` in DT | Adapter bring-up, status LEDs, BOOST_EN, KBD_BL_DTCT |
 | `CONFIG_RETHINK_ADAPTER_LED_SELFTEST` | n | Light each status LED in turn at boot |
 | `CONFIG_RETHINK_ADAPTER_TEST` | n | `adapter` shell commands for bring-up (set by the `rethink-usb-shell` snippet) |

@@ -51,6 +51,10 @@ static const struct device *const tp_power = DEVICE_DT_GET(DT_INST_PHANDLE(0, tp
 static const uint8_t pump_en = PIN_OR_NONE(pump_en_gpios);
 static const uint8_t boost_en = PIN_OR_NONE(boost_en_gpios);
 static const uint8_t bl_detect = PIN_OR_NONE(bl_detect_gpios);
+// From the devicetree, so no BIT(NO_PIN) is compiled without the pin
+#define BL_DETECT_BIT                                                                              \
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(0, bl_detect_gpios),                                         \
+                (BIT(DT_INST_GPIO_PIN(0, bl_detect_gpios))), (0))
 
 #define IDLE_MODE(flags)                                                                           \
     (((flags) & GPIO_PULL_DOWN)                                                                    \
@@ -128,7 +132,36 @@ static enum rethink_bl_detect sample_bl_detect(void) {
         return RETHINK_BL_UNKNOWN;
     }
 
-    return levels & BIT(bl_detect) ? RETHINK_BL_ABSENT : RETHINK_BL_PRESENT;
+    return levels & BL_DETECT_BIT ? RETHINK_BL_ABSENT : RETHINK_BL_PRESENT;
+}
+
+// The pull-up stays on unless a backlit keyboard holds the pin low
+static int park_bl_detect(void) {
+    int err = rethink_exp_configure(bl_detect, bl_state == RETHINK_BL_PRESENT
+                                                   ? RETHINK_EXP_IN
+                                                   : RETHINK_EXP_IN_PULL_UP);
+    if (err) {
+        LOG_ERR("Failed to configure KBD_BL_DTCT (%d)", err);
+    }
+
+    return err;
+}
+
+enum rethink_bl_detect rethink_adapter_bl_redetect(void) {
+    if (!ready || bl_detect == NO_PIN) {
+        return bl_state;
+    }
+
+    enum rethink_bl_detect state = sample_bl_detect();
+
+    if (state != bl_state) {
+        LOG_WRN("Backlit keyboard now %s (was %s)", bl_detect_names[state],
+                bl_detect_names[bl_state]);
+    }
+    bl_state = state;
+    park_bl_detect();
+
+    return state;
 }
 
 // Sink when lit. Unlit, the pull-up holds the pin at U1's supply, which is
@@ -156,12 +189,7 @@ static int park_pins(void) {
     }
 
     if (!err && bl_detect != NO_PIN) {
-        err = rethink_exp_configure(bl_detect, bl_state == RETHINK_BL_PRESENT
-                                                   ? RETHINK_EXP_IN
-                                                   : RETHINK_EXP_IN_PULL_UP);
-        if (err) {
-            LOG_ERR("Failed to configure KBD_BL_DTCT (%d)", err);
-        }
+        err = park_bl_detect();
     }
 
     for (size_t i = 0; i < RETHINK_LED_COUNT && !err; i++) {

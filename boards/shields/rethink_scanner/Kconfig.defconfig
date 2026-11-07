@@ -1,0 +1,9 @@
+# Copyright (c) 2026 Ziemniaczenka
+# SPDX-License-Identifier: MIT
+
+if SHIELD_RETHINK_SCANNER
+
+config ZMK_KEYBOARD_NAME
+    default "ReThink Scanner"
+
+endif # SHIELD_RETHINK_SCANNER

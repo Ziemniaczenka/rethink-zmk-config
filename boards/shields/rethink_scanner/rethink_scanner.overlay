@@ -1,0 +1,19 @@
+/*
+ * Copyright (c) 2026 Ziemniaczenka
+ * SPDX-License-Identifier: MIT
+ *
+ * Matrix scanner, for any keyboard the adapter takes: the adapter's whole
+ * matrix (8x18 plus HOTKEY and PWRSWITCH), and keys that send nothing. The
+ * log reports the row and column of each press, which scripts/matrix_scan.py
+ * reads. No backlight (BUCK1 stays off from boot) and no status LEDs.
+ */
+
+#include "../rethink_common/rethink_cb.dtsi"
+#include "../rethink_common/rethink_adapter.dtsi"
+#include "../rethink_common/rethink_adapter_matrix.dtsi"
+#include "../rethink_common/rethink_adapter_full_layout.dtsi"
+
+// Reported at boot only (FFC2 12-pin; the T430 has it on P1_5)
+&rethink_adapter {
+    bl-detect-gpios = <&rethink_expander RETHINK_EXP_KBD_BL_DTCT GPIO_ACTIVE_LOW>;
+};

@@ -58,9 +58,9 @@ properties:
   bl-detect-gpios:
     type: phandle-array
     description: |
-      KBD_BL_DTCT. Sampled once at init with the pull-up enabled; low means a
-      backlit keyboard is connected. The pull-up then stays on, unless the
-      keyboard holds the pin low.
+      KBD_BL_DTCT. Sampled with the pull-up enabled at init and again before
+      each backlight power-on; low means a backlit keyboard is connected. The
+      pull-up then stays on, unless the keyboard holds the pin low.
 
   # Status LED sinks. A lit LED pulls the pin low; an unlit one rests on the
   # pull-up (open-drain emulation: only the direction register changes, one

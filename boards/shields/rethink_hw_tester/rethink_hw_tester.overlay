@@ -13,6 +13,7 @@
 #include "../rethink_common/rethink_adapter.dtsi"
 #include "../rethink_common/rethink_backlight.dtsi"
 #include "../rethink_common/rethink_adapter_matrix.dtsi"
+#include "../rethink_common/rethink_adapter_full_layout.dtsi"
 
 // Everything an FFC2 keyboard with a numpad (T580, L15) has
 &rethink_adapter {

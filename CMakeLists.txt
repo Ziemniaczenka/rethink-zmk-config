@@ -11,6 +11,10 @@ if(CONFIG_RETHINK_PROFILE_LEDS)
   target_sources(app PRIVATE src/profile_leds.c)
 endif()
 
+if(CONFIG_RETHINK_CONNECTED_LED)
+  target_sources(app PRIVATE src/connected_led.c)
+endif()
+
 if(CONFIG_RETHINK_ADAPTER)
   target_sources(app PRIVATE src/adapter.c src/expander.c)
 endif()

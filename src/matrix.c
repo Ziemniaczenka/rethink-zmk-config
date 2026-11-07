@@ -14,6 +14,10 @@
 // a key, every column is active (expander columns driven low, pull-ups off,
 // so nothing draws current) and the rows and INT wake the matrix, also from
 // System OFF.
+//
+// Columns and direct keys that no matrix transform maps are never driven or
+// read, so a keyboard without keys on DRV16/17 or without HOTKEY/PWRSWITCH
+// saves those I2C transfers on every scan.
 
 #define DT_DRV_COMPAT rethink_matrix
 
@@ -40,6 +44,31 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1, "Exactly one rethink,m
 #define HAS_EXPANDER (EXP_COLS + DIRECT > 0)
 
 BUILD_ASSERT(ROWS <= 32, "Rows are tracked in 32-bit masks");
+BUILD_ASSERT(COLS <= 32, "Columns are tracked in 32-bit masks");
+
+// Columns and direct keys mapped by an enabled matrix transform. Its entries
+// are RC(row, col) = row << 8 | col, shifted by its offsets; direct key i is
+// RC(ROWS, i).
+#define TF_ROW(node, idx) ((DT_PROP_BY_IDX(node, map, idx) >> 8) - DT_PROP(node, row_offset))
+#define TF_COL(node, idx) ((DT_PROP_BY_IDX(node, map, idx) & 0xff) - DT_PROP(node, col_offset))
+#define TF_BIT_IF(node, idx, cond) ((cond) && TF_COL(node, idx) >= 0 ? BIT(TF_COL(node, idx)) : 0)
+#define TF_COL_BIT(node, prop, idx)                                                                \
+    | TF_BIT_IF(node, idx, TF_ROW(node, idx) < ROWS && TF_COL(node, idx) < COLS)
+#define TF_DIRECT_BIT(node, prop, idx)                                                             \
+    | TF_BIT_IF(node, idx, TF_ROW(node, idx) == ROWS && TF_COL(node, idx) < DIRECT)
+#define TF_COLS(node) DT_FOREACH_PROP_ELEM(node, map, TF_COL_BIT)
+#define TF_DIRECTS(node) DT_FOREACH_PROP_ELEM(node, map, TF_DIRECT_BIT)
+
+#if DT_HAS_COMPAT_STATUS_OKAY(zmk_matrix_transform)
+#define USED_COLS (0 DT_FOREACH_STATUS_OKAY(zmk_matrix_transform, TF_COLS))
+#define USED_DIRECT (0 DT_FOREACH_STATUS_OKAY(zmk_matrix_transform, TF_DIRECTS))
+#else
+// ZMK's default transform maps every position
+#define USED_COLS BIT_MASK(COLS)
+#define USED_DIRECT BIT_MASK(DIRECT)
+#endif
+
+static const uint32_t used_cols = USED_COLS;
 BUILD_ASSERT(!HAS_EXPANDER || IS_ENABLED(CONFIG_RETHINK_ADAPTER),
              "Expander columns and direct keys need the adapter (rethink,adapter-ctrl)");
 BUILD_ASSERT(!DIRECT || DT_INST_NODE_HAS_PROP(0, int_gpios), "direct-gpios needs int-gpios");
@@ -88,12 +117,14 @@ static struct k_work_delayable scan_work;
 static int64_t scan_time;
 
 #if EXP_COLS
+// Mapped expander columns only
 static uint16_t exp_col_mask;
 // The expander columns are driven low for the wait
 static bool exp_cols_waiting;
 #endif
 
 #if DIRECT
+// Mapped direct keys only
 static uint16_t direct_mask;
 #endif
 
@@ -128,9 +159,12 @@ static uint32_t read_rows(void) {
     return active;
 }
 
+// Unmapped columns stay released, so their keys can't wake the matrix
 static void set_gpio_cols(int value) {
     for (size_t c = 0; c < GPIO_COLS; c++) {
-        gpio_pin_set_dt(&cols[c], value);
+        if (used_cols & BIT(c)) {
+            gpio_pin_set_dt(&cols[c], value);
+        }
     }
 }
 
@@ -139,7 +173,8 @@ static void row_interrupts(gpio_flags_t flags) {
         gpio_pin_interrupt_configure_dt(&rows[r], flags);
     }
 #if DIRECT
-    gpio_pin_interrupt_configure_dt(&int_pin, expander_ready() ? flags : GPIO_INT_DISABLE);
+    gpio_pin_interrupt_configure_dt(&int_pin,
+                                    expander_ready() && direct_mask ? flags : GPIO_INT_DISABLE);
 #endif
 }
 
@@ -153,19 +188,23 @@ static void wait_for_key(void) {
 #if HAS_EXPANDER
     if (expander_ready()) {
 #if EXP_COLS
-        // Low latch from setup: driving them is the direction change; then
-        // the pull-ups go off, so a driven column draws nothing
-        exp_cols_drive(exp_col_mask);
-        rethink_exp_update(RETHINK_EXP_PULL_EN, exp_col_mask, 0);
-        exp_cols_waiting = true;
+        if (exp_col_mask) {
+            // Low latch from setup: driving them is the direction change;
+            // then the pull-ups go off, so a driven column draws nothing
+            exp_cols_drive(exp_col_mask);
+            rethink_exp_update(RETHINK_EXP_PULL_EN, exp_col_mask, 0);
+            exp_cols_waiting = true;
+        }
 #endif
 #if DIRECT
-        uint16_t levels;
+        if (direct_mask) {
+            uint16_t levels;
 
-        // Unmasked again on every wait (the bring-up shell may mask it); the
-        // read clears a pending interrupt
-        rethink_exp_update(RETHINK_EXP_INT_MASK, direct_mask, 0);
-        rethink_exp_read(&levels);
+            // Unmasked again on every wait (the bring-up shell may mask it);
+            // the read clears a pending interrupt
+            rethink_exp_update(RETHINK_EXP_INT_MASK, direct_mask, 0);
+            rethink_exp_read(&levels);
+        }
 #endif
     }
 #endif
@@ -247,6 +286,9 @@ static void scan(void) {
 #endif
 
     for (size_t c = 0; c < GPIO_COLS; c++) {
+        if (!(used_cols & BIT(c))) {
+            continue;
+        }
         gpio_pin_set_dt(&cols[c], 1);
         k_busy_wait(SETTLE_US);
         raw[c] = read_rows();
@@ -254,9 +296,12 @@ static void scan(void) {
     }
 
 #if EXP_COLS
-    if (exp) {
+    if (exp && exp_col_mask) {
         // Each step releases the previous column and drives the next: one write
         for (size_t k = 0; k < EXP_COLS; k++) {
+            if (!(exp_col_mask & BIT(exp_cols[k]))) {
+                continue;
+            }
             if (exp_cols_drive(BIT(exp_cols[k])) == 0) {
                 k_busy_wait(SETTLE_US);
                 raw[GPIO_COLS + k] = read_rows();
@@ -280,9 +325,12 @@ static void scan(void) {
     uint16_t levels;
 
     // Also clears the expander's interrupt
-    if (exp && rethink_exp_read(&levels) == 0) {
+    if (exp && direct_mask && rethink_exp_read(&levels) == 0) {
         for (size_t i = 0; i < DIRECT; i++) {
-            keep_scanning |= update(&direct_state[i], !(levels & BIT(direct_pins[i])), ROWS, i);
+            uint16_t bit = BIT(direct_pins[i]);
+
+            keep_scanning |= update(&direct_state[i], (direct_mask & bit) && !(levels & bit),
+                                    ROWS, i);
         }
     }
 #endif
@@ -324,7 +372,8 @@ static void setup_pins(void) {
 
 #if DIRECT
     // Without the adapter nothing pulls INT up: disconnected, not floating
-    gpio_pin_configure_dt(&int_pin, expander_ready() ? GPIO_INPUT : GPIO_DISCONNECTED);
+    gpio_pin_configure_dt(&int_pin,
+                          expander_ready() && direct_mask ? GPIO_INPUT : GPIO_DISCONNECTED);
 #endif
 }
 
@@ -379,7 +428,9 @@ static int matrix_init(const struct device *dev) {
 
 #if EXP_COLS
     for (size_t k = 0; k < EXP_COLS; k++) {
-        exp_col_mask |= BIT(exp_cols[k]);
+        if (used_cols & BIT(GPIO_COLS + k)) {
+            exp_col_mask |= BIT(exp_cols[k]);
+        }
     }
 #endif
 
@@ -394,7 +445,9 @@ static int matrix_init(const struct device *dev) {
 
 #if DIRECT
     for (size_t i = 0; i < DIRECT; i++) {
-        direct_mask |= BIT(direct_pins[i]);
+        if (USED_DIRECT & BIT(i)) {
+            direct_mask |= BIT(direct_pins[i]);
+        }
     }
 
     gpio_init_callback(&int_cb, irq_handler, BIT(int_pin.pin));

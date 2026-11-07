@@ -49,9 +49,11 @@ struct backlight_data {
 
 static const struct device *const backlight = DEVICE_DT_INST_GET(0);
 
+// Read again before each power-on, not trusted from boot: the keyboard may
+// have been swapped or reseated since
 static bool detected(void) {
 #if IS_ENABLED(CONFIG_RETHINK_ADAPTER)
-    return rethink_adapter_bl_detect() == RETHINK_BL_PRESENT;
+    return rethink_adapter_bl_redetect() == RETHINK_BL_PRESENT;
 #else
     return false;
 #endif
@@ -118,7 +120,7 @@ static int apply(const struct device *dev) {
             data->warned = true;
         }
         want = false;
-    } else if (want && !detected() && !data->unlocked) {
+    } else if (want && !data->powered && !data->unlocked && !detected()) {
         if (!data->warned) {
             LOG_WRN("Backlight locked: backlit keyboard %s. Triple-press the pairing button "
                     "to unlock until reboot.",

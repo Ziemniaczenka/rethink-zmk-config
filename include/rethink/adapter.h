@@ -26,8 +26,12 @@ enum rethink_bl_detect {
 // True once the PCAL6416A answered at boot
 bool rethink_adapter_ready(void);
 
-// KBD_BL_DTCT, sampled once at init
+// KBD_BL_DTCT as last read: at init, then by rethink_adapter_bl_redetect()
 enum rethink_bl_detect rethink_adapter_bl_detect(void);
+
+// Reads KBD_BL_DTCT again (pull-up on for 1 ms), for a keyboard connected or
+// swapped since boot. Unknown without the adapter or on an I2C error.
+enum rethink_bl_detect rethink_adapter_bl_redetect(void);
 
 const char *rethink_bl_detect_name(enum rethink_bl_detect state);
 
