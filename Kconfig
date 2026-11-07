@@ -226,8 +226,7 @@ config RETHINK_ADAPTER_INIT_PRIORITY
 	int "Init priority"
 	default 90
 	help
-	  After I2C, the PCAL64xxA driver (GPIO_PCAL64XXA_INIT_PRIORITY) and
-	  regulator-fixed (REGULATOR_FIXED_INIT_PRIORITY).
+	  After I2C and regulator-fixed (REGULATOR_FIXED_INIT_PRIORITY).
 
 config RETHINK_ADAPTER_LED_SELFTEST
 	bool "Light each status LED in turn at boot"

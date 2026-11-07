@@ -14,14 +14,11 @@
  */
 
 &i2c22 {
-    // Probed by rethink,adapter-ctrl; absent on a bare Control Board
+    // Probed and driven by rethink,adapter-ctrl; absent on a bare Control Board
     rethink_expander: gpio@20 {
-        compatible = "nxp,pcal6416a";
+        compatible = "rethink,pcal6416a";
         reg = <0x20>;
-        gpio-controller;
         #gpio-cells = <2>;
-        ngpios = <16>;
-        zephyr,deferred-init;
     };
 };
 

@@ -1,0 +1,25 @@
+# Copyright (c) 2026 Ziemniaczenka
+# SPDX-License-Identifier: MIT
+
+description: |
+  PCAL6416A I/O expander (U1) on the ReThink adapter. No Zephyr GPIO driver
+  binds to it: rethink,adapter-ctrl drives its registers directly
+  (src/expander.c) and writes only the bytes that change, so a matrix column
+  or status LED costs a single 1-byte I2C write. The node keeps the GPIO
+  specifier format, so other nodes name its pins as
+  <&rethink_expander pin flags>; flags only carry the idle pulls. It is not
+  marked gpio-controller, since nothing provides a GPIO device for it (the
+  gpio shell would look for one).
+
+compatible: "rethink,pcal6416a"
+
+include: i2c-device.yaml
+
+properties:
+  "#gpio-cells":
+    type: int
+    const: 2
+
+gpio-cells:
+  - pin
+  - flags

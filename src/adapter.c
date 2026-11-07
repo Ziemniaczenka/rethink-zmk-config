@@ -13,6 +13,7 @@
 #include <zephyr/logging/log.h>
 
 #include <rethink/adapter.h>
+#include <rethink/expander.h>
 
 #if IS_ENABLED(CONFIG_ZMK_HID_INDICATORS)
 #include <zmk/event_manager.h>
@@ -25,11 +26,6 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1, "Exactly one rethink,a
 
 #define EXPANDER DT_INST_PHANDLE(0, expander)
 
-BUILD_ASSERT(DT_PROP(EXPANDER, zephyr_deferred_init),
-             "The expander needs zephyr,deferred-init: it may be missing or unpowered at boot");
-
-static const struct device *const expander = DEVICE_DT_GET(EXPANDER);
-
 // JP10 2-3: U1 and its I2C pull-ups run from TP_3V3
 #define EXPANDER_ON_TP_POWER IS_ENABLED(CONFIG_RETHINK_EXPANDER_SUPPLY_TP_3V3)
 
@@ -40,38 +36,45 @@ BUILD_ASSERT(!EXPANDER_ON_TP_POWER || DT_INST_NODE_HAS_PROP(0, tp_power_supply),
 static const struct device *const tp_power = DEVICE_DT_GET(DT_INST_PHANDLE(0, tp_power_supply));
 #endif
 
+// U1 pin numbers from the GPIO specifiers; levels are physical, flags only
+// give the idle pulls
+#define NO_PIN 0xff
+#define PIN_OR_NONE(prop)                                                                          \
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(0, prop), (DT_INST_GPIO_PIN(0, prop)), (NO_PIN))
+
 // A closed JP1/JP2 ties the enable to its supply: leave the pin an input
 #define HAS_PUMP_EN                                                                                \
     (DT_INST_NODE_HAS_PROP(0, pump_en_gpios) && !IS_ENABLED(CONFIG_RETHINK_PUMP_EN_TIED))
 #define HAS_BOOST_EN                                                                               \
     (DT_INST_NODE_HAS_PROP(0, boost_en_gpios) && !IS_ENABLED(CONFIG_RETHINK_BOOST_EN_TIED))
 
-#if HAS_PUMP_EN
-static const struct gpio_dt_spec pump_en = GPIO_DT_SPEC_INST_GET(0, pump_en_gpios);
-#endif
+static const uint8_t pump_en = PIN_OR_NONE(pump_en_gpios);
+static const uint8_t boost_en = PIN_OR_NONE(boost_en_gpios);
+static const uint8_t bl_detect = PIN_OR_NONE(bl_detect_gpios);
 
-#if HAS_BOOST_EN
-static const struct gpio_dt_spec boost_en = GPIO_DT_SPEC_INST_GET(0, boost_en_gpios);
-#endif
+#define IDLE_MODE(flags)                                                                           \
+    (((flags) & GPIO_PULL_DOWN)                                                                    \
+         ? RETHINK_EXP_IN_PULL_DOWN                                                                \
+         : (((flags) & GPIO_PULL_UP) ? RETHINK_EXP_IN_PULL_UP : RETHINK_EXP_IN))
 
-#if DT_INST_NODE_HAS_PROP(0, bl_detect_gpios)
-static const struct gpio_dt_spec bl_detect = GPIO_DT_SPEC_INST_GET(0, bl_detect_gpios);
-#endif
+#define IDLE_PIN(node_id, prop, idx)                                                               \
+    {DT_GPIO_PIN_BY_IDX(node_id, prop, idx), IDLE_MODE(DT_GPIO_FLAGS_BY_IDX(node_id, prop, idx))},
 
+static const struct {
+    uint8_t pin;
+    uint8_t mode;
+} idle_pins[] = {
 #if DT_INST_NODE_HAS_PROP(0, idle_gpios)
-#define IDLE_SPEC(node_id, prop, idx) GPIO_DT_SPEC_GET_BY_IDX(node_id, prop, idx),
-static const struct gpio_dt_spec idle_pins[] = {DT_INST_FOREACH_PROP_ELEM(0, idle_gpios, IDLE_SPEC)};
+    DT_INST_FOREACH_PROP_ELEM(0, idle_gpios, IDLE_PIN)
 #endif
+};
 
-// Absent LEDs keep a NULL port
-#define LED_SPEC(prop) GPIO_DT_SPEC_INST_GET_OR(0, prop, {0})
-
-static const struct gpio_dt_spec leds[RETHINK_LED_COUNT] = {
-    [RETHINK_LED_PWR] = LED_SPEC(pwr_led_gpios),
-    [RETHINK_LED_MUTE] = LED_SPEC(mute_led_gpios),
-    [RETHINK_LED_MICMUTE] = LED_SPEC(micmute_led_gpios),
-    [RETHINK_LED_CAPSLOCK] = LED_SPEC(capslock_led_gpios),
-    [RETHINK_LED_NUMLOCK] = LED_SPEC(numlock_led_gpios),
+static const uint8_t leds[RETHINK_LED_COUNT] = {
+    [RETHINK_LED_PWR] = PIN_OR_NONE(pwr_led_gpios),
+    [RETHINK_LED_MUTE] = PIN_OR_NONE(mute_led_gpios),
+    [RETHINK_LED_MICMUTE] = PIN_OR_NONE(micmute_led_gpios),
+    [RETHINK_LED_CAPSLOCK] = PIN_OR_NONE(capslock_led_gpios),
+    [RETHINK_LED_NUMLOCK] = PIN_OR_NONE(numlock_led_gpios),
 };
 
 static const char *const led_names[] = {"PWR/FnLock", "Mute", "MicMute", "CapsLock", "NumLock"};
@@ -94,12 +97,14 @@ const char *rethink_adapter_led_name(enum rethink_led led) {
 }
 
 int rethink_adapter_boost_set(bool on) {
-#if HAS_BOOST_EN
+    if (!HAS_BOOST_EN) {
+        return -ENOTSUP;
+    }
     if (!ready) {
         return -ENODEV;
     }
 
-    int err = gpio_pin_set_dt(&boost_en, on);
+    int err = rethink_exp_configure(boost_en, on ? RETHINK_EXP_OUT_HIGH : RETHINK_EXP_OUT_LOW);
     if (err) {
         LOG_ERR("Failed to set BOOST_EN (%d)", err);
     } else {
@@ -107,82 +112,73 @@ int rethink_adapter_boost_set(bool on) {
     }
 
     return err;
-#else
-    return -ENOTSUP;
-#endif
 }
 
-#if DT_INST_NODE_HAS_PROP(0, bl_detect_gpios)
 // Sampled with the pull-up; park_pins() then sets its resting state
 static enum rethink_bl_detect sample_bl_detect(void) {
-    int err = gpio_pin_configure(bl_detect.port, bl_detect.pin, GPIO_INPUT | GPIO_PULL_UP);
+    uint16_t levels;
+
+    int err = rethink_exp_configure(bl_detect, RETHINK_EXP_IN_PULL_UP);
+    if (!err) {
+        k_busy_wait(1000);
+        err = rethink_exp_read(&levels);
+    }
     if (err) {
-        LOG_ERR("Failed to configure KBD_BL_DTCT (%d)", err);
+        LOG_ERR("Failed to read KBD_BL_DTCT (%d)", err);
         return RETHINK_BL_UNKNOWN;
     }
 
-    k_busy_wait(1000);
-    int level = gpio_pin_get_raw(bl_detect.port, bl_detect.pin);
-
-    if (level < 0) {
-        LOG_ERR("Failed to read KBD_BL_DTCT (%d)", level);
-        return RETHINK_BL_UNKNOWN;
-    }
-
-    return level == 0 ? RETHINK_BL_PRESENT : RETHINK_BL_ABSENT;
+    return levels & BIT(bl_detect) ? RETHINK_BL_ABSENT : RETHINK_BL_PRESENT;
 }
-#endif
 
 // Sink when lit. Unlit, the pull-up holds the pin at U1's supply, which is
 // also the LEDs' supply: no current through the LED, and the input doesn't
 // sit ~1.2 V below VDD(P), where U1 draws extra current (datasheet 9.1).
-// Physical levels, flags ignored.
-static int led_apply(const struct gpio_dt_spec *spec, bool on) {
-    return gpio_pin_configure(spec->port, spec->pin,
-                              on ? GPIO_OUTPUT_LOW : GPIO_INPUT | GPIO_PULL_UP);
+// park_pins() leaves the latch low and the pull-up on, so switching is a
+// direction change: one 1-byte write.
+static int led_apply(uint8_t pin, bool on) {
+    return rethink_exp_update(RETHINK_EXP_CONFIG, BIT(pin), on ? 0 : BIT(pin));
 }
 
 // Every pin nothing drives gets a defined level. A floating input draws up
 // to 80 µA (U1 datasheet, ΔIDD); an adapter without a keyboard drew 0.5 mA
 // from LED_3V3, which stays on in System OFF. A pull-up costs current only
 // while something holds its pin low: KBD_BL_DTCT keeps its pull-up unless a
-// backlit keyboard grounds it.
+// backlit keyboard grounds it. Status LEDs go off.
 static int park_pins(void) {
-    int err;
+    int err = 0;
 
-#if DT_INST_NODE_HAS_PROP(0, idle_gpios)
-    for (size_t i = 0; i < ARRAY_SIZE(idle_pins); i++) {
-        err = gpio_pin_configure_dt(&idle_pins[i], GPIO_INPUT);
+    for (size_t i = 0; i < ARRAY_SIZE(idle_pins) && !err; i++) {
+        err = rethink_exp_configure(idle_pins[i].pin, idle_pins[i].mode);
         if (err) {
             LOG_ERR("Failed to park expander pin %u (%d)", idle_pins[i].pin, err);
-            return err;
         }
     }
-#endif
 
-#if DT_INST_NODE_HAS_PROP(0, bl_detect_gpios)
-    err = gpio_pin_configure(bl_detect.port, bl_detect.pin,
-                             bl_state == RETHINK_BL_PRESENT ? GPIO_INPUT
-                                                            : GPIO_INPUT | GPIO_PULL_UP);
-    if (err) {
-        LOG_ERR("Failed to configure KBD_BL_DTCT (%d)", err);
-        return err;
+    if (!err && bl_detect != NO_PIN) {
+        err = rethink_exp_configure(bl_detect, bl_state == RETHINK_BL_PRESENT
+                                                   ? RETHINK_EXP_IN
+                                                   : RETHINK_EXP_IN_PULL_UP);
+        if (err) {
+            LOG_ERR("Failed to configure KBD_BL_DTCT (%d)", err);
+        }
     }
-#endif
 
-    for (size_t i = 0; i < RETHINK_LED_COUNT; i++) {
-        if (leds[i].port == NULL) {
+    for (size_t i = 0; i < RETHINK_LED_COUNT && !err; i++) {
+        if (leds[i] == NO_PIN) {
             continue;
         }
 
-        err = led_apply(&leds[i], false);
+        err = rethink_exp_update(RETHINK_EXP_OUTPUT, BIT(leds[i]), 0);
+        if (!err) {
+            err = rethink_exp_configure(leds[i], RETHINK_EXP_IN_PULL_UP);
+        }
         if (err) {
             LOG_ERR("Failed to configure %s LED (%d)", led_names[i], err);
-            return err;
         }
     }
 
-    return 0;
+    return err;
 }
 
 void rethink_adapter_park(void) {
@@ -196,11 +192,11 @@ int rethink_adapter_led_set(enum rethink_led led, bool on) {
         return -ENODEV;
     }
 
-    if (led >= RETHINK_LED_COUNT || leds[led].port == NULL) {
+    if (led >= RETHINK_LED_COUNT || leds[led] == NO_PIN) {
         return -ENOTSUP;
     }
 
-    int err = led_apply(&leds[led], on);
+    int err = led_apply(leds[led], on);
     if (err) {
         LOG_ERR("Failed to set %s LED (%d)", led_names[led], err);
     }
@@ -222,14 +218,14 @@ static void selftest(struct k_work *work) {
     size_t count = RETHINK_LED_COUNT;
 
     for (size_t i = 0; i < count; i++) {
-        if (leds[i].port != NULL) {
+        if (leds[i] != NO_PIN) {
             rethink_adapter_led_set(i, selftest_step == count || i == selftest_step);
         }
     }
 
     if (selftest_step < count) {
         LOG_INF("LED self-test: %s%s", led_names[selftest_step],
-                leds[selftest_step].port ? "" : " (not on this keyboard)");
+                leds[selftest_step] != NO_PIN ? "" : " (not on this keyboard)");
     } else if (selftest_step == count) {
         LOG_INF("LED self-test: all");
     }
@@ -252,12 +248,12 @@ void rethink_adapter_power_down(void) {
 
     park_pins();
 
-#if HAS_PUMP_EN
-    gpio_pin_set_dt(&pump_en, 0);
-#endif
-#if HAS_BOOST_EN
-    gpio_pin_set_dt(&boost_en, 0);
-#endif
+    if (HAS_PUMP_EN) {
+        rethink_exp_configure(pump_en, RETHINK_EXP_OUT_LOW);
+    }
+    if (HAS_BOOST_EN) {
+        rethink_exp_configure(boost_en, RETHINK_EXP_OUT_LOW);
+    }
 #if EXPANDER_ON_TP_POWER
     regulator_disable(tp_power);
 #endif
@@ -275,42 +271,42 @@ static int adapter_init(void) {
     k_msleep(DT_INST_PROP(0, power_on_delay_ms));
 #endif
 
-    err = device_init(expander);
+    err = rethink_exp_init();
     if (err) {
         LOG_WRN("ReThink adapter not found: %s did not answer (%d). Running without it.",
-                expander->name, err);
+                DT_NODE_FULL_NAME(EXPANDER), err);
 #if EXPANDER_ON_TP_POWER
         regulator_disable(tp_power);
 #endif
         return 0;
     }
 
-#if HAS_PUMP_EN
-    err = gpio_pin_configure_dt(&pump_en, GPIO_OUTPUT_INACTIVE);
-    if (err) {
-        LOG_ERR("Failed to configure PUMP_EN (%d)", err);
-        return 0;
+    if (HAS_PUMP_EN) {
+        err = rethink_exp_configure(pump_en, RETHINK_EXP_OUT_LOW);
+        if (err) {
+            LOG_ERR("Failed to configure PUMP_EN (%d)", err);
+            return 0;
+        }
     }
-#endif
 
-#if HAS_BOOST_EN
-    err = gpio_pin_configure_dt(&boost_en, GPIO_OUTPUT_INACTIVE);
-    if (err) {
-        LOG_ERR("Failed to configure BOOST_EN (%d)", err);
-        return 0;
+    if (HAS_BOOST_EN) {
+        err = rethink_exp_configure(boost_en, RETHINK_EXP_OUT_LOW);
+        if (err) {
+            LOG_ERR("Failed to configure BOOST_EN (%d)", err);
+            return 0;
+        }
     }
-#endif
 
-#if DT_INST_NODE_HAS_PROP(0, bl_detect_gpios)
-    bl_state = sample_bl_detect();
-#endif
+    if (bl_detect != NO_PIN) {
+        bl_state = sample_bl_detect();
+    }
 
     if (park_pins()) {
         return 0;
     }
 
     ready = true;
-    LOG_INF("ReThink adapter found (%s), backlit keyboard %s", expander->name,
+    LOG_INF("ReThink adapter found (%s), backlit keyboard %s", DT_NODE_FULL_NAME(EXPANDER),
             bl_detect_names[bl_state]);
 
 #if IS_ENABLED(CONFIG_RETHINK_ADAPTER_LED_SELFTEST)
@@ -320,7 +316,7 @@ static int adapter_init(void) {
     return 0;
 }
 
-// After I2C, the expander driver and regulator-fixed; before rethink,backlight
+// After I2C and regulator-fixed; before rethink,backlight
 SYS_INIT(adapter_init, POST_KERNEL, CONFIG_RETHINK_ADAPTER_INIT_PRIORITY);
 
 #if IS_ENABLED(CONFIG_ZMK_HID_INDICATORS)

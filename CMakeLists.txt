@@ -12,7 +12,7 @@ if(CONFIG_RETHINK_PROFILE_LEDS)
 endif()
 
 if(CONFIG_RETHINK_ADAPTER)
-  target_sources(app PRIVATE src/adapter.c)
+  target_sources(app PRIVATE src/adapter.c src/expander.c)
 endif()
 
 if(CONFIG_RETHINK_ADAPTER_TEST)

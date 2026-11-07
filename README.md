@@ -8,13 +8,19 @@ ZMK firmware for the [ReThink Keyboard](https://github.com/Ziemniaczenka/ReThink
 
 - [x] Container build (local and CI), flashing over USB, bare Control Board tester
 - [x] Adapter control, backlight power chain and interlock, hardware options (`config/rethink.conf`)
-- [ ] Power: off in wired mode without USB, fuel gauge fixes (framework-cb)
-- [ ] Control Board LEDs: RGB as charging indicator, battery level and charging animation on the white LEDs
-- [ ] Key matrix: open-drain columns for diodeless ThinkPad matrices, ghost-key blocking, expander columns DRV15-17 with fewer I2C transfers (patched PCAL64xxA driver), HOTKEY/PWRSWITCH through the expander interrupt, matrix tester, transform generator
+- [x] Power off in wired mode without USB; charger current fix (framework-cb)
+- [x] Adapter bring-up: `rethink-usb-shell` commands, idle expander pins on pulls (System OFF at the bare board's current)
+
+Next, in this order:
+
+- [ ] Key matrix: expander register access without Zephyr's PCAL64xxA driver (a column step is one 1-byte I2C write), open-drain columns for diodeless ThinkPad matrices, ghost-key blocking, expander columns DRV15-17, HOTKEY/PWRSWITCH through the expander interrupt
+- [ ] Matrix scanner: a raw 8×18 shield and a script that asks for each key, reads its row and column from the USB log, and writes the matrix transform and a keymap
+- [ ] Shield `rethink_t420`: the first real keyboard
 - [ ] TrackPoint: power and reset sequencing, PS/2 driver
-- [ ] Shields: `rethink_t420`, `rethink_t430`, `rethink_t480`, `rethink_l14`
-- [ ] Backlight on the adapter: current (`CONFIG_RETHINK_BACKLIGHT_MAX_DUTY`), PWM frequency
-- [ ] Fuel gauge model of the real battery
+- [ ] Battery: fuel gauge model of the real cell, charge-current reading, discharge limit (200 mA, 1 A with the backlight), USB 1.5 A, low-battery cutoff
+- [ ] Backlight on a real keyboard (`rethink_t430`): current on BUCK1 (50 mA works, ~106 mA doesn't), `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY`, PWM frequency
+- [ ] Control Board LEDs: RGB as charging indicator; battery level, charging and backlight-level animations on the white LEDs
+- [ ] Shields: `rethink_t480`, `rethink_l14`
 
 ## Software stack
 
@@ -185,17 +191,17 @@ Build with `.\build.ps1 -Shield rethink_hw_tester -Snippet rethink-usb-shell` an
 | Command | Does |
 | --- | --- |
 | `adapter status` | TP_3V3, VLED_BL, INT and the level of every expander pin |
-| `adapter tp on\|off` | TP_3V3 (P3.12), off from boot. `off` sets PUMP_EN low first |
+| `adapter tp on\|off` | TP_3V3 (P3.12), off from boot. `off` switches the charge pump off first (PUMP_EN low) |
 | `adapter pump on\|off` | PUMP_EN: charge pump TP_5V. `on` is refused while TP_3V3 is off: the LM2775's EN must stay within 0.3 V of its supply |
 | `adapter vled on\|off` | VLED_BL to the adapter: BUCK1 (if it is the source) and P3.11 |
 | `adapter boost on\|off` | BOOST_EN: backlight boost BL_5V (needs VLED_BL) |
 | `adapter pwm <0-100>` | Duty cycle on P1.17, limited to `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY` |
-| `adapter pin <name> 0\|1\|z\|u` | An expander pin driven low or high, released, or released with its 100 kΩ pull-up. Names as in `adapter status` |
+| `adapter pin <name> 0\|1\|z\|u\|d` | An expander pin driven low or high, released, or released with its 100 kΩ pull-up or pull-down. Names as in `adapter status` |
 | `adapter in` | HOTKEY, PWRSWITCH and KBD_BL_DTCT, read with pull-ups |
 | `adapter int [s]` | Waits for INT (P3.06) while an input is shorted to GND, then checks that reading the inputs releases it |
 | `adapter shorts` | Drives the 40 lines to the keyboard connectors low one at a time and reports lines that follow (shorted) or are low at rest. The matrix is suspended meanwhile |
 
-Zephyr's `i2c` and `gpio` shells are included too, e.g. `i2c scan i2c@c8000` (only 0x20 should answer).
+Zephyr's `i2c` and `gpio` shells are included too, e.g. `i2c scan i2c@c8000` (only 0x20 should answer). The `gpio` shell covers the Control Board ports only: the expander has no Zephyr GPIO driver (see `include/rethink/expander.h`).
 
 ## Repository layout
 
@@ -212,7 +218,7 @@ Zephyr's `i2c` and `gpio` shells are included too, e.g. `i2c scan i2c@c8000` (on
 ├── CMakeLists.txt, Kconfig      Module sources and options (CONFIG_RETHINK_*)
 ├── src/                         Pairing button, profile LEDs, adapter control and its
 │                                bring-up commands, backlight, wired power-off
-├── include/rethink/             Public API (adapter.h, backlight.h)
+├── include/rethink/             Public API (adapter.h, expander.h, backlight.h)
 ├── dts/bindings/                rethink,adapter-ctrl and rethink,backlight
 ├── boards/shields/              Shields; rethink_common/ holds the shared dtsi files
 │                                (Control Board, adapter, backlight, header matrix)

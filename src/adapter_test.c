@@ -15,7 +15,6 @@
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/pwm.h>
 #include <zephyr/drivers/regulator.h>
 #include <zephyr/kernel.h>
@@ -23,15 +22,13 @@
 #include <zephyr/shell/shell.h>
 
 #include <rethink/adapter.h>
+#include <rethink/expander.h>
 
-#define EXPANDER DT_INST_PHANDLE(0, expander)
 #define BACKLIGHT DT_NODELABEL(rethink_backlight)
 #define HAS_BACKLIGHT DT_NODE_HAS_STATUS_OKAY(BACKLIGHT)
 
 BUILD_ASSERT(DT_INST_NODE_HAS_PROP(0, tp_power_supply), "The adapter tests need tp-power-supply");
 
-static const struct device *const expander = DEVICE_DT_GET(EXPANDER);
-static const struct i2c_dt_spec expander_i2c = I2C_DT_SPEC_GET(EXPANDER);
 static const struct device *const tp_power = DEVICE_DT_GET(DT_INST_PHANDLE(0, tp_power_supply));
 
 // Control Board TP_INT: the expander's open-drain INT, R3 pull-up on the adapter
@@ -46,10 +43,6 @@ static const struct device *const buck1 = DEVICE_DT_GET(DT_PHANDLE(BACKLIGHT, vi
 #endif
 static bool vled_on;
 #endif
-
-// PCAL6416A registers
-#define REG_INPUT 0x00
-#define REG_INT_MASK 0x4a
 
 // U1 pins 0-15 are P0_0..P1_7 (ReThink_keyboard docs/pinouts/io_expander.md)
 #define PIN_PUMP_EN 0
@@ -79,7 +72,7 @@ static bool parse_on_off(const struct shell *sh, const char *arg, bool *on) {
 
 static bool check_expander(const struct shell *sh) {
     if (!rethink_adapter_ready()) {
-        shell_error(sh, "The expander (%s) did not answer at boot", expander->name);
+        shell_error(sh, "The expander did not answer at boot");
         return false;
     }
     return true;
@@ -92,13 +85,21 @@ static int int_level(void) {
 
 static void configure_inputs(void) {
     for (size_t i = 0; i < ARRAY_SIZE(input_pins); i++) {
-        gpio_pin_configure(expander, input_pins[i], GPIO_INPUT | GPIO_PULL_UP);
+        rethink_exp_configure(input_pins[i], RETHINK_EXP_IN_PULL_UP);
     }
     k_busy_wait(1000);
 }
 
+// Level of one expander pin, or a negative error
+static int exp_level(uint8_t pin) {
+    uint16_t levels;
+    int err = rethink_exp_read(&levels);
+
+    return err ? err : (levels >> pin) & 1;
+}
+
 static int cmd_status(const struct shell *sh, size_t argc, char **argv) {
-    gpio_port_value_t pins;
+    uint16_t pins;
 
     shell_print(sh, "TP_3V3 (P3.12): %s", regulator_is_enabled(tp_power) ? "on" : "off");
 #if HAS_BACKLIGHT
@@ -110,7 +111,7 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv) {
         return -ENODEV;
     }
 
-    int err = gpio_port_get_raw(expander, &pins);
+    int err = rethink_exp_read(&pins);
     if (err) {
         shell_error(sh, "Failed to read the expander (%d)", err);
         return err;
@@ -136,8 +137,11 @@ static int cmd_tp(const struct shell *sh, size_t argc, char **argv) {
     }
 
     // U2's EN must stay within its supply (TP_3V3 + 0.3 V): pump off first
-    if (!on && !IS_ENABLED(CONFIG_RETHINK_PUMP_EN_TIED) && device_is_ready(expander)) {
-        gpio_pin_configure(expander, PIN_PUMP_EN, GPIO_OUTPUT_LOW);
+    if (!on && !IS_ENABLED(CONFIG_RETHINK_PUMP_EN_TIED) && rethink_adapter_ready()) {
+        if (exp_level(PIN_PUMP_EN) == 1) {
+            shell_print(sh, "Charge pump off first (PUMP_EN low)");
+        }
+        rethink_exp_configure(PIN_PUMP_EN, RETHINK_EXP_OUT_LOW);
     }
 
     // TP_3V3 is off from boot (regulator-boot-off); others may hold it too
@@ -158,7 +162,7 @@ static int cmd_tp(const struct shell *sh, size_t argc, char **argv) {
 }
 
 // PUMP_EN and BOOST_EN, unless a closed JP1/JP2 ties them to their supply
-static int set_enable(const struct shell *sh, const char *arg, gpio_pin_t pin, bool tied) {
+static int set_enable(const struct shell *sh, const char *arg, uint8_t pin, bool tied) {
     bool on;
 
     if (!parse_on_off(sh, arg, &on) || !check_expander(sh)) {
@@ -171,14 +175,13 @@ static int set_enable(const struct shell *sh, const char *arg, gpio_pin_t pin, b
         return -ENOTSUP;
     }
 
-    int err = gpio_pin_configure(expander, pin, on ? GPIO_OUTPUT_HIGH : GPIO_OUTPUT_LOW);
+    int err = rethink_exp_configure(pin, on ? RETHINK_EXP_OUT_HIGH : RETHINK_EXP_OUT_LOW);
     if (err) {
         shell_error(sh, "Failed to set %s (%d)", pin_names[pin], err);
         return err;
     }
 
-    shell_print(sh, "%s %s, pin reads %d", pin_names[pin], on ? "high" : "low",
-                gpio_pin_get_raw(expander, pin));
+    shell_print(sh, "%s %s, pin reads %d", pin_names[pin], on ? "high" : "low", exp_level(pin));
     return 0;
 }
 
@@ -281,13 +284,14 @@ static int cmd_pwm(const struct shell *sh, size_t argc, char **argv) {
 static int cmd_pin(const struct shell *sh, size_t argc, char **argv) {
     static const struct {
         const char *arg;
-        gpio_flags_t flags;
+        enum rethink_exp_mode mode;
         const char *what;
     } modes[] = {
-        {"0", GPIO_OUTPUT_LOW, "driven low"},
-        {"1", GPIO_OUTPUT_HIGH, "driven high"},
-        {"z", GPIO_INPUT, "released"},
-        {"u", GPIO_INPUT | GPIO_PULL_UP, "released with 100k pull-up"},
+        {"0", RETHINK_EXP_OUT_LOW, "driven low"},
+        {"1", RETHINK_EXP_OUT_HIGH, "driven high"},
+        {"z", RETHINK_EXP_IN, "released"},
+        {"u", RETHINK_EXP_IN_PULL_UP, "released with 100k pull-up"},
+        {"d", RETHINK_EXP_IN_PULL_DOWN, "released with 100k pull-down"},
     };
     size_t pin, mode;
 
@@ -303,7 +307,7 @@ static int cmd_pin(const struct shell *sh, size_t argc, char **argv) {
     }
 
     if (pin == ARRAY_SIZE(pin_names) || mode == ARRAY_SIZE(modes)) {
-        shell_error(sh, "Usage: adapter pin <name> 0|1|z|u, names as in 'adapter status'");
+        shell_error(sh, "Usage: adapter pin <name> 0|1|z|u|d, names as in 'adapter status'");
         return -EINVAL;
     }
     if (pin == PIN_PUMP_EN || pin == PIN_BOOST_EN) {
@@ -314,15 +318,14 @@ static int cmd_pin(const struct shell *sh, size_t argc, char **argv) {
         return -ENODEV;
     }
 
-    int err = gpio_pin_configure(expander, pin, modes[mode].flags);
+    int err = rethink_exp_configure(pin, modes[mode].mode);
     if (err) {
         shell_error(sh, "Failed to configure %s (%d)", pin_names[pin], err);
         return err;
     }
 
     k_busy_wait(1000);
-    shell_print(sh, "%s %s, reads %d", pin_names[pin], modes[mode].what,
-                gpio_pin_get_raw(expander, pin));
+    shell_print(sh, "%s %s, reads %d", pin_names[pin], modes[mode].what, exp_level(pin));
     return 0;
 }
 
@@ -333,7 +336,7 @@ static int cmd_in(const struct shell *sh, size_t argc, char **argv) {
 
     configure_inputs();
     for (size_t i = 0; i < ARRAY_SIZE(input_pins); i++) {
-        int level = gpio_pin_get_raw(expander, input_pins[i]);
+        int level = exp_level(input_pins[i]);
         shell_print(sh, "%s %s", pin_names[input_pins[i]],
                     level < 0 ? "read failed" : level ? "high" : "low (pulled to GND)");
     }
@@ -342,7 +345,7 @@ static int cmd_in(const struct shell *sh, size_t argc, char **argv) {
 }
 
 static void wait_for_int(const struct shell *sh, long seconds) {
-    uint8_t inputs[2];
+    uint16_t inputs;
 
     if (int_level() == 0) {
         shell_error(sh, "INT is low with nothing changed: shorted to GND, or R3 missing");
@@ -361,11 +364,11 @@ static void wait_for_int(const struct shell *sh, long seconds) {
     }
 
     int elapsed = (int)(k_uptime_get() - start);
-    int err = i2c_burst_read_dt(&expander_i2c, REG_INPUT, inputs, sizeof(inputs));
+    int err = rethink_exp_read(&inputs);
 
     k_busy_wait(100);
     shell_print(sh, "INT went low after %d ms. Inputs P0 0x%02x P1 0x%02x; INT %s", elapsed,
-                inputs[0], inputs[1],
+                inputs & 0xff, inputs >> 8,
                 err                                           ? "not cleared (read failed)"
                 : gpio_pin_get_raw(int_pin.port, int_pin.pin) ? "released after reading them"
                                                               : "still low after reading them");
@@ -374,9 +377,7 @@ static void wait_for_int(const struct shell *sh, long seconds) {
 // The expander pulls INT low when an unmasked input changes, until its inputs are read
 static int cmd_int(const struct shell *sh, size_t argc, char **argv) {
     long seconds = argc > 1 ? strtol(argv[1], NULL, 10) : 15;
-    uint8_t inputs[2];
-    const uint8_t unmasked[2] = {(uint8_t)~INPUT_MASK, (uint8_t)~(INPUT_MASK >> 8)};
-    const uint8_t masked[2] = {0xff, 0xff};
+    uint16_t inputs;
 
     if (!check_expander(sh)) {
         return -ENODEV;
@@ -385,9 +386,9 @@ static int cmd_int(const struct shell *sh, size_t argc, char **argv) {
     configure_inputs();
 
     // Reading the inputs clears a pending interrupt
-    int err = i2c_burst_read_dt(&expander_i2c, REG_INPUT, inputs, sizeof(inputs));
+    int err = rethink_exp_read(&inputs);
     if (!err) {
-        err = i2c_burst_write_dt(&expander_i2c, REG_INT_MASK, unmasked, sizeof(unmasked));
+        err = rethink_exp_update(RETHINK_EXP_INT_MASK, INPUT_MASK, 0);
     }
     if (err) {
         shell_error(sh, "Failed to set up the expander interrupt (%d)", err);
@@ -395,7 +396,7 @@ static int cmd_int(const struct shell *sh, size_t argc, char **argv) {
     }
 
     wait_for_int(sh, CLAMP(seconds, 1, 60));
-    i2c_burst_write_dt(&expander_i2c, REG_INT_MASK, masked, sizeof(masked));
+    rethink_exp_update(RETHINK_EXP_INT_MASK, INPUT_MASK, INPUT_MASK);
     return 0;
 }
 
@@ -404,11 +405,11 @@ static int cmd_int(const struct shell *sh, size_t argc, char **argv) {
 // TWIM), PWM on P1.17 (PWM22), PUMP_EN and BOOST_EN (they switch supplies).
 enum { PORT_P0, PORT_P1, PORT_P3, PORT_EXP, PORT_COUNT };
 
-static const struct device *const ports[PORT_COUNT] = {
+// Control Board ports; PORT_EXP goes through rethink/expander.h
+static const struct device *const ports[PORT_EXP] = {
     DEVICE_DT_GET(DT_NODELABEL(gpio0)),
     DEVICE_DT_GET(DT_NODELABEL(gpio1)),
     DEVICE_DT_GET(DT_NODELABEL(gpio3)),
-    DEVICE_DT_GET(EXPANDER),
 };
 
 struct line {
@@ -441,20 +442,49 @@ static const struct line lines[] = {
 
 BUILD_ASSERT(ARRAY_SIZE(lines) <= 64, "Lines are tracked in 64-bit masks");
 
-static int line_configure(const struct line *line, gpio_flags_t flags) {
-    return gpio_pin_configure(ports[line->port], line->pin, flags);
+// The test uses three states: pulled up, driven low, released
+enum line_state { LINE_PULL_UP, LINE_LOW, LINE_RELEASED };
+
+static int line_configure(const struct line *line, enum line_state state) {
+    if (line->port == PORT_EXP) {
+        static const enum rethink_exp_mode modes[] = {
+            [LINE_PULL_UP] = RETHINK_EXP_IN_PULL_UP,
+            [LINE_LOW] = RETHINK_EXP_OUT_LOW,
+            [LINE_RELEASED] = RETHINK_EXP_IN,
+        };
+
+        return rethink_exp_configure(line->pin, modes[state]);
+    }
+
+    static const gpio_flags_t flags[] = {
+        [LINE_PULL_UP] = GPIO_INPUT | GPIO_PULL_UP,
+        [LINE_LOW] = GPIO_OUTPUT_LOW,
+        [LINE_RELEASED] = GPIO_DISCONNECTED,
+    };
+
+    // INT has the adapter's R3 and the firmware reads it: an input, not disconnected
+    gpio_flags_t f = line->port == PORT_P3 && state == LINE_RELEASED ? GPIO_INPUT : flags[state];
+
+    return gpio_pin_configure(ports[line->port], line->pin, f);
 }
 
 // Bit i set: lines[i] reads low
 static int read_low(uint64_t *low) {
     gpio_port_value_t values[PORT_COUNT];
+    uint16_t exp_levels;
 
-    for (size_t p = 0; p < PORT_COUNT; p++) {
+    for (size_t p = 0; p < PORT_EXP; p++) {
         int err = gpio_port_get_raw(ports[p], &values[p]);
         if (err) {
             return err;
         }
     }
+
+    int err = rethink_exp_read(&exp_levels);
+    if (err) {
+        return err;
+    }
+    values[PORT_EXP] = exp_levels;
 
     *low = 0;
     for (size_t i = 0; i < ARRAY_SIZE(lines); i++) {
@@ -489,7 +519,7 @@ static int cmd_shorts(const struct shell *sh, size_t argc, char **argv) {
     matrices(PM_DEVICE_ACTION_SUSPEND);
 
     for (size_t i = 0; i < ARRAY_SIZE(lines) && !err; i++) {
-        err = line_configure(&lines[i], GPIO_INPUT | GPIO_PULL_UP);
+        err = line_configure(&lines[i], LINE_PULL_UP);
     }
     k_msleep(5);
     if (!err) {
@@ -512,13 +542,13 @@ static int cmd_shorts(const struct shell *sh, size_t argc, char **argv) {
     }
 
     for (size_t i = 0; i < ARRAY_SIZE(lines) && !err; i++) {
-        err = line_configure(&lines[i], GPIO_OUTPUT_LOW);
+        err = line_configure(&lines[i], LINE_LOW);
         if (err) {
             break;
         }
         k_busy_wait(500);
         err = read_low(&low);
-        line_configure(&lines[i], GPIO_INPUT | GPIO_PULL_UP);
+        line_configure(&lines[i], LINE_PULL_UP);
         k_busy_wait(1000);
         if (err) {
             break;
@@ -543,9 +573,7 @@ static int cmd_shorts(const struct shell *sh, size_t argc, char **argv) {
 
     // Back to how the firmware had them; the matrix sets up its own lines
     for (size_t i = 0; i < ARRAY_SIZE(lines); i++) {
-        bool control_board = lines[i].port == PORT_P0 || lines[i].port == PORT_P1;
-
-        line_configure(&lines[i], control_board ? GPIO_DISCONNECTED : GPIO_INPUT);
+        line_configure(&lines[i], LINE_RELEASED);
     }
     rethink_adapter_park();
     matrices(PM_DEVICE_ACTION_RESUME);

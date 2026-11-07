@@ -3,13 +3,13 @@
 
 description: |
   ReThink adapter control: brings up the PCAL6416A I/O expander (U1) and owns
-  its pins. Other code uses them through include/rethink/adapter.h, since
-  devices may not depend on the deferred expander directly.
+  its pins. Other code uses them through include/rethink/adapter.h, or
+  register by register through include/rethink/expander.h.
 
-  The expander is optional at runtime and is initialized with device_init().
-  If it does not answer, a warning is logged and the board keeps working
-  without it. With CONFIG_RETHINK_EXPANDER_SUPPLY_TP_3V3 (JP10 2-3) U1 and its
-  I2C pull-ups run from TP_3V3, which is then enabled first.
+  The expander is optional at runtime and is probed at init. If it does not
+  answer, a warning is logged and the board keeps working without it. With
+  CONFIG_RETHINK_EXPANDER_SUPPLY_TP_3V3 (JP10 2-3) U1 and its I2C pull-ups
+  run from TP_3V3, which is then enabled first.
 
   Assembly options (jumpers, fitted parts) are Kconfig symbols, set in
   config/rethink.conf. The properties below describe the wiring; shields only
@@ -21,7 +21,7 @@ properties:
   expander:
     type: phandle
     required: true
-    description: PCAL6416A node. Must have zephyr,deferred-init.
+    description: PCAL6416A node (rethink,pcal6416a).
 
   tp-power-supply:
     type: phandle
@@ -63,8 +63,8 @@ properties:
       keyboard holds the pin low.
 
   # Status LED sinks. A lit LED pulls the pin low; an unlit one rests on the
-  # pull-up (open-drain emulation, since the PCAL64xxA driver rejects
-  # GPIO_OPEN_DRAIN). Pin flags are ignored.
+  # pull-up (open-drain emulation: only the direction register changes, one
+  # 1-byte write). Pin flags are ignored.
   pwr-led-gpios:
     type: phandle-array
     description: LEDPWR, power LED (Mezzanine) or Fn lock LED (FFC2).
