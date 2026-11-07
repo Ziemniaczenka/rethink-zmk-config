@@ -1,0 +1,101 @@
+/*
+ * Copyright (c) 2026 Ziemniaczenka
+ * SPDX-License-Identifier: MIT
+ *
+ * ThinkPad T420, ISO. Each key sends the standard key code of its position;
+ * the host's layout (Norwegian, UK, ...) gives the legends. The comments name
+ * the keys by their UK ISO legends: ` left of 1, # left of Enter (NUHS),
+ * \ right of LShift (NUBS).
+ *
+ * Above the keyboard: mute, volume down/up, mic mute (F20, which Linux treats
+ * as mic mute), ThinkVantage and power. ThinkVantage and power send nothing.
+ * The keys left and right of Up are browser back and forward.
+ *
+ * Fn is the bottom-left key, as on the ThinkPad, and does what the keycaps
+ * show where a standard key code exists: SysRq, Num Lock, Break, lock
+ * (Win+L), sleep, display (Win+P), brightness on Home/End, media on the
+ * arrows. Battery, wireless, camera, pointing device, hibernate, ThinkLight
+ * and zoom have none and are left out.
+ *
+ * Fn+ScrLk (NmLk) toggles the embedded keypad: the digits on 7-9, U-O, J-L
+ * and M, / * - + on 0, P, ; and /. It sends digits and keypad operators,
+ * which don't depend on the host's Num Lock.
+ */
+
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/keys.h>
+
+#define NUM 1
+#define FN 2
+
+/ {
+    keymap {
+        compatible = "zmk,keymap";
+
+        base_layer {
+            display-name = "Base";
+            bindings = <
+                // Esc      Mute        VolDn         VolUp         MicMute  ThinkVantage  Power  PrtSc      ScrLk     Pause            Insert   Delete   Home      PgUp
+                   &kp ESC  &kp C_MUTE  &kp C_VOL_DN  &kp C_VOL_UP  &kp F20  &none         &none  &kp PSCRN  &kp SLCK  &kp PAUSE_BREAK  &kp INS  &kp DEL  &kp HOME  &kp PG_UP
+                // F1      F2      F3      F4      F5      F6      F7      F8      F9      F10      F11      F12      End      PgDn
+                   &kp F1  &kp F2  &kp F3  &kp F4  &kp F5  &kp F6  &kp F7  &kp F8  &kp F9  &kp F10  &kp F11  &kp F12  &kp END  &kp PG_DN
+                // `          1       2       3       4       5       6       7       8       9       0       -          =          Bksp
+                   &kp GRAVE  &kp N1  &kp N2  &kp N3  &kp N4  &kp N5  &kp N6  &kp N7  &kp N8  &kp N9  &kp N0  &kp MINUS  &kp EQUAL  &kp BSPC
+                // Tab      Q      W      E      R      T      Y      U      I      O      P      [         ]         Enter
+                   &kp TAB  &kp Q  &kp W  &kp E  &kp R  &kp T  &kp Y  &kp U  &kp I  &kp O  &kp P  &kp LBKT  &kp RBKT  &kp RET
+                // Caps      A      S      D      F      G      H      J      K      L      ;         '        #
+                   &kp CAPS  &kp A  &kp S  &kp D  &kp F  &kp G  &kp H  &kp J  &kp K  &kp L  &kp SEMI  &kp SQT  &kp NUHS
+                // LShift     \         Z      X      C      V      B      N      M      ,          .        /         RShift
+                   &kp LSHFT  &kp NUBS  &kp Z  &kp X  &kp C  &kp V  &kp B  &kp N  &kp M  &kp COMMA  &kp DOT  &kp FSLH  &kp RSHFT
+                // Fn      LCtrl      Win       LAlt      Space      AltGr     Menu       RCtrl      Back           Up      Forward
+                   &mo FN  &kp LCTRL  &kp LGUI  &kp LALT  &kp SPACE  &kp RALT  &kp K_APP  &kp RCTRL  &kp C_AC_BACK  &kp UP  &kp C_AC_FORWARD
+                // Left      Down      Right
+                   &kp LEFT  &kp DOWN  &kp RIGHT
+            >;
+        };
+
+        num_layer {
+            display-name = "NmLk";
+            bindings = <
+                // Esc     Mute    VolDn   VolUp   MicMute  ThinkVantage  Power   PrtSc   ScrLk   Pause   Insert  Delete  Home    PgUp
+                   &trans  &trans  &trans  &trans  &trans   &trans        &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans
+                // F1      F2      F3      F4      F5      F6      F7      F8      F9      F10     F11     F12     End     PgDn
+                   &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans
+                // `       1       2       3       4       5       6       7       8       9       0              -       =       Bksp
+                   &trans  &trans  &trans  &trans  &trans  &trans  &trans  &kp N7  &kp N8  &kp N9  &kp KP_DIVIDE  &trans  &trans  &trans
+                // Tab     Q       W       E       R       T       Y       U       I       O       P                [       ]       Enter
+                   &trans  &trans  &trans  &trans  &trans  &trans  &trans  &kp N4  &kp N5  &kp N6  &kp KP_MULTIPLY  &trans  &trans  &trans
+                // Caps    A       S       D       F       G       H       J       K       L       ;             '       #
+                   &trans  &trans  &trans  &trans  &trans  &trans  &trans  &kp N1  &kp N2  &kp N3  &kp KP_MINUS  &trans  &trans
+                // LShift  \       Z       X       C       V       B       N       M       ,       .       /            RShift
+                   &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &kp N0  &trans  &trans  &kp KP_PLUS  &trans
+                // Fn      LCtrl   Win     LAlt    Space   AltGr   Menu    RCtrl   Back    Up      Forward
+                   &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans
+                // Left    Down    Right
+                   &trans  &trans  &trans
+            >;
+        };
+
+        fn_layer {
+            display-name = "Fn";
+            bindings = <
+                // Esc     Mute    VolDn   VolUp   MicMute  ThinkVantage  Power   PrtSc          ScrLk     Pause                Insert  Delete  Home          PgUp
+                   &trans  &trans  &trans  &trans  &trans   &trans        &trans  &kp LA(PSCRN)  &tog NUM  &kp LC(PAUSE_BREAK)  &trans  &trans  &kp C_BRI_UP  &trans
+                // F1      F2         F3      F4           F5      F6      F7         F8      F9      F10     F11     F12     End           PgDn
+                   &trans  &kp LG(L)  &trans  &kp C_SLEEP  &trans  &trans  &kp LG(P)  &trans  &trans  &trans  &trans  &trans  &kp C_BRI_DN  &trans
+                // `       1       2       3       4       5       6       7       8       9       0       -       =       Bksp
+                   &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans
+                // Tab     Q       W       E       R       T       Y       U       I       O       P       [       ]       Enter
+                   &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans
+                // Caps    A       S       D       F       G       H       J       K       L       ;       '       #
+                   &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans
+                // LShift  \       Z       X       C       V       B       N       M       ,       .       /       RShift
+                   &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans
+                // Fn      LCtrl   Win     LAlt    Space   AltGr   Menu    RCtrl   Back    Up          Forward
+                   &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &kp C_STOP  &trans
+                // Left        Down      Right
+                   &kp C_PREV  &kp C_PP  &kp C_NEXT
+            >;
+        };
+    };
+};

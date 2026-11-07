@@ -2,7 +2,7 @@
 
 ZMK firmware for the [ReThink Keyboard](https://github.com/Ziemniaczenka/ReThink_Keyboard): ThinkPad keyboard modules driven by the Framework Wireless Touchpad Keyboard Control Board (nRF54LM20A + nPM1300) through the ReThink adapter.
 
-> Work in progress. Shields so far: the testers `rethink_bare_tester` and `rethink_hw_tester`, the matrix scanner `rethink_scanner`, and the first keyboard, `rethink_l420`.
+> Work in progress. Shields so far: the testers `rethink_bare_tester` and `rethink_hw_tester`, the matrix scanner `rethink_scanner`, and the keyboards `rethink_l420` and `rethink_t420`.
 
 ## Roadmap
 
@@ -18,7 +18,7 @@ ZMK firmware for the [ReThink Keyboard](https://github.com/Ziemniaczenka/ReThink
 
 Next, in this order:
 
-- [ ] Shield `rethink_t420` (Mezzanine)
+- [ ] Shield `rethink_t420` (Mezzanine): keymap from the scan, buttons above the keyboard, Fn layer per the keycaps, Caps Lock LED. Built, not yet tested on the keyboard
 - [ ] TrackPoint: power and reset sequencing, PS/2 driver
 - [ ] Battery: fuel gauge model of the real cell (the "Example" model reads 50 % at 4155 mV), charge-current reading (fuel gauge +525 mA, meter 440 mA), discharge limit (200 mA, 1 A with the backlight), USB 1.5 A, low-battery cutoff
 - [ ] Idle current on Bluetooth. Measured on battery with a multimeter:
@@ -38,7 +38,7 @@ Next, in this order:
   - **Advertising:** ZMK advertises every 30-60 ms for as long as no host is connected. Slow down after about 30 s (ZMK patch).
   - Then `CONFIG_ZMK_SLEEP`: System OFF after some minutes untouched on Bluetooth too, waking on a key (rows and INT as wake sources).
 - [ ] Backlight on a real keyboard (`rethink_t430`): current on BUCK1 (50 mA works, ~106 mA doesn't), `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY` (capped at 10 % until then), PWM frequency
-- [ ] Control Board LEDs: PWM brightness control (RGB especially); RGB as charging indicator; battery level, charging and backlight-level animations on the white LEDs
+- [ ] Control Board LEDs: the blue LED sometimes misbehaves (`CONFIG_RETHINK_CONNECTED_LED`, to be described); PWM brightness control (RGB especially); RGB as charging indicator; battery level, charging and backlight-level animations on the white LEDs
 - [ ] Shields: `rethink_t480`, `rethink_l14`
 - [ ] Self-test after programming, for user-built boards: check the adapter (I2C) and other parts at boot and report a fault without a serial log, e.g. a sequence of red blinks
 
@@ -275,6 +275,28 @@ ThinkPad L420 keyboard on FFC1 (30-pin matrix cable in J4). Mapped with `rethink
 - **Name:** "ReThink L420".
 
 Build with `-Snippet rethink-usb-log` to see `position: N` for each key in the log.
+
+### `rethink_t420`
+
+ThinkPad T420 keyboard on the Mezzanine connector (2x20 pins). Mapped with `rethink_scanner` on a Norwegian T420 keyboard.
+
+- **Everything from `rethink_bare_tester` except its matrix**, as `rethink_l420`.
+- **Matrix:** the T420's 96 keys (ISO) as the physical layout `t420_layout`: the keyboard, the buttons above it, Fn on HOTKEY and the power button on PWRSWITCH.
+- **Buttons above the keyboard:** mute, volume down, volume up, mic mute (sends F20, which Linux treats as mic mute). ThinkVantage and power send nothing. The keys left and right of Up are browser back and forward.
+- **Keymap:** standard key codes by position, as `rethink_l420`. Fn does what the keycaps show:
+
+  | Fn + | Sends |
+  | --- | --- |
+  | PrtSc, ScrLk, Pause | SysRq (Alt+PrtSc), NmLk (embedded keypad on/off), Break |
+  | F2, F4, F7 | Lock (Win+L), sleep, display (Win+P) |
+  | Home, End | Brightness up, down |
+  | Up, Down, Left, Right | Stop, play/pause, previous, next |
+
+  Battery (F3), wireless (F5), camera (F6), pointing device (F8), hibernate (F12), ThinkLight (PgUp) and zoom (Space) have no standard key code. The embedded keypad is the same as on `rethink_l420`.
+- **Caps Lock LED** (Mezzanine 21) follows the host. The power, mute and mic mute LEDs rest on their pull-ups.
+- **Not on this keyboard:** backlight. KBDID0-2 (Mezzanine 25, 27, 29) meet the adapter's backlight PWM, GND and BL_5V, so keep JP3 open; P1.17 stays unused.
+- **Not yet:** the TrackPoint (Mezzanine 37-40).
+- **Name:** "ReThink T420".
 
 ## Repository layout
 
