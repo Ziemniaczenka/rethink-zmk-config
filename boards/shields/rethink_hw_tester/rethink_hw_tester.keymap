@@ -2,9 +2,12 @@
  * Copyright (c) 2026 Ziemniaczenka
  * SPDX-License-Identifier: MIT
  *
- * Same as rethink_bare_tester, except row 0 (KSI0), columns 0-4 (KSO0-4):
- * backlight toggle, down, up, Caps Lock, Num Lock. Caps/Num Lock toggle the
- * host state, which the adapter LEDs follow. Row r, column c = position r*15 + c.
+ * Every position sends a different key, so each one can be told apart.
+ * Row 0 (SENSE0), columns 0-4 (DRV0-4): backlight toggle, down, up, Caps Lock,
+ * Num Lock. Caps/Num Lock toggle the host state, which the adapter LEDs
+ * follow. Columns 15-17 are DRV15-17 on the expander. The last row holds the
+ * direct keys: HOTKEY (calculator) and PWRSWITCH (keypad comma).
+ * Row r, column c = position r*18 + c.
  */
 
 #include <behaviors.dtsi>
@@ -17,14 +20,15 @@
 
         default_layer {
             bindings = <
-                &bl BL_TOG       &bl BL_DEC       &bl BL_INC       &kp CAPS         &kp KP_NUM       &kp F            &kp G            &kp H            &kp I            &kp J            &kp K            &kp L            &kp M            &kp N            &kp O
-                &kp P           &kp Q           &kp R           &kp S           &kp T           &kp U           &kp V           &kp W           &kp X           &kp Y           &kp Z           &kp N1          &kp N2          &kp N3          &kp N4
-                &kp N5          &kp N6          &kp N7          &kp N8          &kp N9          &kp N0          &kp F1          &kp F2          &kp F3          &kp F4          &kp F5          &kp F6          &kp F7          &kp F8          &kp F9
-                &kp F10         &kp F11         &kp F12         &kp F13         &kp F14         &kp F15         &kp F16         &kp F17         &kp F18         &kp F19         &kp F20         &kp F21         &kp F22         &kp F23         &kp F24
-                &kp RET         &kp ESC         &kp BSPC        &kp TAB         &kp SPACE       &kp MINUS       &kp EQUAL       &kp LBKT        &kp RBKT        &kp BSLH        &kp SEMI        &kp SQT         &kp GRAVE       &kp COMMA       &kp DOT
-                &kp FSLH        &kp CAPS        &kp PSCRN       &kp SLCK        &kp PAUSE_BREAK &kp INS         &kp HOME        &kp PG_UP       &kp DEL         &kp END         &kp PG_DN       &kp RIGHT       &kp LEFT        &kp DOWN        &kp UP
-                &kp KP_NUM      &kp KP_DIVIDE   &kp KP_MULTIPLY &kp KP_MINUS    &kp KP_PLUS     &kp KP_ENTER    &kp KP_N1       &kp KP_N2       &kp KP_N3       &kp KP_N4       &kp KP_N5       &kp KP_N6       &kp KP_N7       &kp KP_N8       &kp KP_N9
-                &kp KP_N0       &kp KP_DOT      &kp K_APP       &kp LCTRL       &kp LSHFT       &kp LALT        &kp LGUI        &kp RCTRL       &kp RSHFT       &kp RALT        &kp RGUI        &kp C_MUTE      &kp C_VOL_DN    &kp C_VOL_UP    &kp C_PP
+                &bl BL_TOG       &bl BL_DEC       &bl BL_INC       &kp CAPS         &kp KP_NUM       &kp F            &kp G            &kp H            &kp I            &kp J            &kp K            &kp L            &kp M            &kp N            &kp O            &kp A            &kp B            &kp C
+                &kp P           &kp Q           &kp R           &kp S           &kp T           &kp U           &kp V           &kp W           &kp X           &kp Y           &kp Z           &kp N1          &kp N2          &kp N3          &kp N4          &kp D           &kp E           &kp C_NEXT
+                &kp N5          &kp N6          &kp N7          &kp N8          &kp N9          &kp N0          &kp F1          &kp F2          &kp F3          &kp F4          &kp F5          &kp F6          &kp F7          &kp F8          &kp F9          &kp C_PREV      &kp C_STOP      &kp C_BRI_UP
+                &kp F10         &kp F11         &kp F12         &kp F13         &kp F14         &kp F15         &kp F16         &kp F17         &kp F18         &kp F19         &kp F20         &kp F21         &kp F22         &kp F23         &kp F24         &kp C_BRI_DN    &kp C_EJECT     &kp C_RW
+                &kp RET         &kp ESC         &kp BSPC        &kp TAB         &kp SPACE       &kp MINUS       &kp EQUAL       &kp LBKT        &kp RBKT        &kp BSLH        &kp SEMI        &kp SQT         &kp GRAVE       &kp COMMA       &kp DOT         &kp C_FF        &kp INT1        &kp INT2
+                &kp FSLH        &kp CAPS        &kp PSCRN       &kp SLCK        &kp PAUSE_BREAK &kp INS         &kp HOME        &kp PG_UP       &kp DEL         &kp END         &kp PG_DN       &kp RIGHT       &kp LEFT        &kp DOWN        &kp UP          &kp INT3        &kp INT4        &kp INT5
+                &kp KP_NUM      &kp KP_DIVIDE   &kp KP_MULTIPLY &kp KP_MINUS    &kp KP_PLUS     &kp KP_ENTER    &kp KP_N1       &kp KP_N2       &kp KP_N3       &kp KP_N4       &kp KP_N5       &kp KP_N6       &kp KP_N7       &kp KP_N8       &kp KP_N9       &kp INT6        &kp LANG1       &kp LANG2
+                &kp KP_N0       &kp KP_DOT      &kp K_APP       &kp LCTRL       &kp LSHFT       &kp LALT        &kp LGUI        &kp RCTRL       &kp RSHFT       &kp RALT        &kp RGUI        &kp C_MUTE      &kp C_VOL_DN    &kp C_VOL_UP    &kp C_PP        &kp NUBS        &kp NUHS        &kp KP_EQUAL
+                &kp C_AL_CALC   &kp KP_COMMA
             >;
         };
     };

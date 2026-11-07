@@ -1,0 +1,77 @@
+# Copyright (c) 2026 Ziemniaczenka
+# SPDX-License-Identifier: MIT
+
+description: |
+  Keyboard matrix for ThinkPad keyboards on the ReThink adapter, based on
+  ZMK's zmk,input-gpio-matrix. Columns are driven active one at a time and
+  the rows read (col2row). It reports the same input events (INPUT_ABS_X =
+  column, INPUT_ABS_Y = row, INPUT_BTN_TOUCH), so it serves as
+  zmk,matrix-input.
+
+  Additions:
+  - Columns on the adapter's expander (expander-col-gpios), numbered after
+    the Control Board columns. They are switched like open-drain outputs,
+    driven low or released to U1's pull-up, each step one 1-byte I2C write.
+  - Direct keys on the expander (direct-gpios), inputs that a key pulls to
+    GND, reported as one extra row after the last matrix row. U1's INT line
+    (int-gpios) wakes the matrix when one changes.
+  - Ghost-key blocking for diodeless matrices: where pressed keys form a
+    rectangle, the keys in it keep their state until the rectangle breaks.
+
+  Without the adapter the expander columns and direct keys stay silent and
+  the rest of the matrix works.
+
+compatible: "rethink,matrix"
+
+include: base.yaml
+
+properties:
+  row-gpios:
+    type: phandle-array
+    required: true
+    description: Rows, read. ThinkPad matrices pull them up (GPIO_ACTIVE_LOW | GPIO_PULL_UP).
+
+  col-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      Control Board columns, driven active one at a time. GPIO_OPEN_DRAIN
+      for diodeless matrices, so an inactive column doesn't drive against
+      an active one through two pressed keys.
+
+  expander-col-gpios:
+    type: phandle-array
+    description: Columns on the expander, <&rethink_expander pin 0>. Active low.
+
+  direct-gpios:
+    type: phandle-array
+    description: Expander inputs pulled to GND by a key, <&rethink_expander pin 0>.
+
+  int-gpios:
+    type: phandle-array
+    description: Control Board pin with the expander's INT. Required with direct-gpios.
+
+  ghost-key-blocking:
+    type: boolean
+    description: Block presses that complete a rectangle of pressed keys.
+
+  settle-us:
+    type: int
+    default: 5
+    description: |
+      Wait after switching a column before reading the rows. A released
+      open-drain column recovers through the row pull-ups, slower than a
+      driven one.
+
+  debounce-press-ms:
+    type: int
+    default: 5
+
+  debounce-release-ms:
+    type: int
+    default: 5
+
+  debounce-scan-period-ms:
+    type: int
+    default: 1
+    description: Time between scans while any key is pressed.

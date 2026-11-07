@@ -500,6 +500,7 @@ static int read_low(uint64_t *low) {
 static void matrices(enum pm_device_action action) {
 #define MATRIX_ACTION(node) pm_device_action_run(DEVICE_DT_GET(node), action);
     DT_FOREACH_STATUS_OKAY(zmk_input_gpio_matrix, MATRIX_ACTION)
+    DT_FOREACH_STATUS_OKAY(rethink_matrix, MATRIX_ACTION)
 #undef MATRIX_ACTION
 }
 

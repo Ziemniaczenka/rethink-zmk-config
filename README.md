@@ -19,8 +19,9 @@ Next, in this order:
 - [ ] TrackPoint: power and reset sequencing, PS/2 driver
 - [ ] Battery: fuel gauge model of the real cell, charge-current reading, discharge limit (200 mA, 1 A with the backlight), USB 1.5 A, low-battery cutoff
 - [ ] Backlight on a real keyboard (`rethink_t430`): current on BUCK1 (50 mA works, ~106 mA doesn't), `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY`, PWM frequency
-- [ ] Control Board LEDs: RGB as charging indicator; battery level, charging and backlight-level animations on the white LEDs
+- [ ] Control Board LEDs: PWM brightness control (RGB especially); RGB as charging indicator; battery level, charging and backlight-level animations on the white LEDs
 - [ ] Shields: `rethink_t480`, `rethink_l14`
+- [ ] Self-test after programming, for user-built boards: check the adapter (I2C) and other parts at boot and report a fault without a serial log, e.g. a sequence of red blinks
 
 ## Software stack
 
@@ -168,14 +169,15 @@ Tests a bare Control Board; no adapter needed.
 
 ### `rethink_hw_tester`
 
-Tests the ReThink adapter. Everything from `rethink_bare_tester`, plus the following:
+Tests the ReThink adapter. Everything from `rethink_bare_tester` except its matrix, plus the following:
 
+- **Matrix:** the adapter's whole matrix (`rethink_adapter_matrix.dtsi`, driver `rethink,matrix`): SENSE0-7 by DRV0-14 on the Control Board and DRV15-17 on the expander, plus HOTKEY and PWRSWITCH as direct keys in row 8. Row r, column c = position r*18 + c; HOTKEY and PWRSWITCH are 144 and 145. Columns are open-drain and ghost keys are blocked, as diodeless ThinkPad matrices need. Every position sends a different key (see the keymap), and the log shows `position: N` for each press. Without a keyboard, short a SENSE pin to a DRV pin, e.g. on the Mezzanine connector SENSE0 (pin 5) to DRV15 (pin 30) for position 15, or HOTKEY (pin 1) to GND (pin 34) for 144. Without the adapter, the Control Board part still works on the header.
 - **Adapter detection:** probes the PCAL6416A at 0x20 on `i2c22` (first switching on TP_3V3 if the expander runs from it, JP10 2-3). If it doesn't answer, it logs `ReThink adapter not found` and carries on without it.
 - **Status LEDs** *(needs adapter)*: all five, as on an FFC2 keyboard with a numpad. At boot, Fn lock/power, mute, mic mute, Caps Lock and Num Lock light one after another, then all together, then go off. After that, Caps Lock and Num Lock follow the host's lock state. A lit LED pulls its expander pin low; an unlit one rests on the expander's pull-up.
 - **Idle expander pins** *(needs adapter)*: every pin nothing drives rests on the expander's pull-up (`idle-gpios` in `rethink_adapter.dtsi`), also in System OFF, since a floating input draws up to 80 µA from LED_3V3. TP1/TP2_RST rest on the pull-down instead: R14/R22 go to the pointing stick supplies, which float while off.
 - **Backlight power chain:** nPM1300 BUCK1 (if it is the VLED_BL source) → P3.11 (VLED_BL to the adapter) → BOOST_EN (expander P0_1) → PWM 4096 Hz on P1.17, duty cycle = brightness × `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY`. The chain is on only while the brightness is above 0.
 - **Backlight interlock:** at boot, KBD_BL_DTCT (expander P1_7) is read once with the pull-up enabled; a backlit keyboard pulls it low. The pull-up then stays on unless the pin is low. Without a detected backlit keyboard (or without the adapter), the backlight stays locked and logs `Backlight locked`. Triple-press the pairing button to unlock it until reboot.
-- **Keymap:** row 0 (KSI0) × KSO0..4 are backlight toggle, down (20 % steps), up, Caps Lock and Num Lock. All other positions are as in `rethink_bare_tester`. The backlight starts on at 40 %.
+- **Keymap:** row 0 (KSI0) × KSO0..4 are backlight toggle, down (20 % steps), up, Caps Lock and Num Lock. The backlight starts on at 40 %.
 - **Name:** "ReThink HW Test" (BLE names are limited to 16 characters).
 
 Test on a bare Control Board (build with `-Snippet rethink-usb-log` to watch the log):
@@ -216,12 +218,15 @@ Zephyr's `i2c` and `gpio` shells are included too, e.g. `i2c scan i2c@c8000` (on
 ├── config/rethink.conf          Hardware options (jumpers, fitted parts)
 ├── zephyr/module.yml            This repository as a Zephyr module
 ├── CMakeLists.txt, Kconfig      Module sources and options (CONFIG_RETHINK_*)
-├── src/                         Pairing button, profile LEDs, adapter control and its
-│                                bring-up commands, backlight, wired power-off
+├── src/                         Pairing button, profile LEDs, adapter control, expander
+│                                registers, matrix, bring-up commands, backlight,
+│                                wired power-off
 ├── include/rethink/             Public API (adapter.h, expander.h, backlight.h)
-├── dts/bindings/                rethink,adapter-ctrl and rethink,backlight
+├── dts/bindings/                rethink,adapter-ctrl, rethink,pcal6416a, rethink,matrix
+│                                and rethink,backlight
 ├── boards/shields/              Shields; rethink_common/ holds the shared dtsi files
-│                                (Control Board, adapter, backlight, header matrix)
+│                                (Control Board, adapter, its matrix, backlight,
+│                                header matrix)
 └── snippets/                    rethink-usb-log (USB CDC ACM logging),
                                  rethink-usb-shell (shell and log on the same port)
 ```
@@ -241,6 +246,7 @@ Zephyr's `i2c` and `gpio` shells are included too, e.g. `i2c scan i2c@c8000` (on
 | `CONFIG_RETHINK_ADAPTER` | if `rethink,adapter-ctrl` in DT | Adapter bring-up, status LEDs, BOOST_EN, KBD_BL_DTCT |
 | `CONFIG_RETHINK_ADAPTER_LED_SELFTEST` | n | Light each status LED in turn at boot |
 | `CONFIG_RETHINK_ADAPTER_TEST` | n | `adapter` shell commands for bring-up (set by the `rethink-usb-shell` snippet) |
+| `CONFIG_RETHINK_MATRIX` | if `rethink,matrix` in DT | Matrix with expander columns, direct keys and ghost-key blocking |
 | `CONFIG_RETHINK_BACKLIGHT` | if `rethink,backlight` in DT | Backlight power chain, PWM and interlock (use with `CONFIG_ZMK_BACKLIGHT`) |
 
 Hardware options: see [Hardware options](#hardware-options).

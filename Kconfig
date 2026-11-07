@@ -247,6 +247,27 @@ source "subsys/logging/Kconfig.template.log_config"
 
 endif # RETHINK_ADAPTER
 
+DT_COMPAT_RETHINK_MATRIX := rethink,matrix
+
+config RETHINK_MATRIX
+	bool "ReThink keyboard matrix"
+	default $(dt_compat_enabled,$(DT_COMPAT_RETHINK_MATRIX))
+	depends on INPUT
+	select GPIO
+	select PM_DEVICE
+	select ZMK_DEBOUNCE
+	help
+	  The rethink,matrix input device: ZMK's GPIO matrix plus columns and
+	  direct keys on the adapter's expander and ghost-key blocking.
+
+if RETHINK_MATRIX
+
+module = RETHINK_MATRIX
+module-str = ReThink matrix
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # RETHINK_MATRIX
+
 DT_COMPAT_RETHINK_BACKLIGHT := rethink,backlight
 
 config RETHINK_BACKLIGHT

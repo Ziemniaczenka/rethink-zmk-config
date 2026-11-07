@@ -64,6 +64,7 @@ static void power_off(struct k_work *work) {
     // so before the scheduler is locked).
 #define SUSPEND_MATRIX(node) pm_device_action_run(DEVICE_DT_GET(node), PM_DEVICE_ACTION_SUSPEND);
     DT_FOREACH_STATUS_OKAY(zmk_input_gpio_matrix, SUSPEND_MATRIX)
+    DT_FOREACH_STATUS_OKAY(rethink_matrix, SUSPEND_MATRIX)
 
     // Nothing may light an LED again from here on
     k_sched_lock();
