@@ -19,12 +19,14 @@ ZMK firmware for the [ReThink Keyboard](https://github.com/Ziemniaczenka/ReThink
 Next, in this order:
 
 - [x] Shield `rethink_t420` (Mezzanine): keymap from the scan, buttons above the keyboard, Fn layer per the keycaps, Caps Lock LED
+- [x] T420 ANSI keyboard: scanned; differs from ISO in three positions, now in the same layout (`rethink_t420` runs either).
 - [ ] TrackPoint, TP1 on the T420 and L420 (see [Pointing stick](#pointing-stick-in-progress)):
   - [x] Power, reset and the bit-banged PS/2 link, `tp` shell commands. Tested on the T420: ID 01/0e, 14.7 kHz, no bit errors on USB, one byte in ~1500 broken off with Bluetooth
   - [x] Pointing: start at boot (self-test, ID, streaming on), packets to ZMK's pointing input. Tested on the T420: movement and its three buttons over USB and Bluetooth
   - [x] Reliable reception. With pointing in the shell build (debug logs over USB), wired: 2505 bytes without an error; over Bluetooth: 107 errors in 913 bytes (46 framing, 3 parity, 58 broken off; earlier 4 % in 4444). An interrupt delayed by more than one clock period (68 µs) misses a bit, and the Bluetooth controller's upper layer shared the GPIO interrupt's priority 1. With GPIOTE20 at priority 0 (`rethink_trackpoint.dtsi`): wired 13466 bytes without an error, Bluetooth 12 errors in 2673 bytes (0.45 %: 1 framing, 10 parity, 1 broken off), so now mostly a bit read late rather than an edge missed. A packet with an error is now asked for again (`fe`, TrackPoint specification 2.4.2), so a lost packet doesn't take a button change with it; `tp stat` counts them as sent again or lost. Tested over Bluetooth: 12 errors in 3729 bytes, 11 packets sent again, none lost. A command's reply lost the same way is asked for again too. If errors grow, receive through UARTE20 instead, where the hardware samples the bits: a PS/2 byte is UART 8O1 at the stick's clock (14.4 kBd is within 2 % of this stick's 14.7 kHz; the nRF54L has odd parity). Sending stays bit-banged: rare, and the stick clocks it. Also drop packets with the overflow bits set
   - [ ] Keys: Fn+F8 on/off, Ctrl+Fn+F8 recalibrate (`&tp`). Tested on the T420: off at once, on in 0.87 s; recalibrating does nothing while the stick is off. Report rate up and down on Shift+Fn+F8 and Ctrl+Shift+Fn+F8: tested, commented out in the keymaps. Untested: off after 10 minutes unused
-  - [ ] Scrolling: middle button held while the stick moves sends the wheel instead of movement, vertical, and horizontal only past a large dead zone. A middle click only if the button comes up without movement. In test (see Scrolling in [Pointing stick](#pointing-stick-in-progress)): 20 counts per wheel step, sideways dead zone 2 counts per report, tunable with `tp scroll`. Later: smooth scrolling (`CONFIG_ZMK_POINTING_SMOOTH_SCROLLING`, the HID resolution multiplier) for steps finer than three lines
+  - [x] Scrolling: middle button held while the stick moves sends the wheel instead of movement, vertical, and horizontal only past a dead zone. A middle click only if the button comes up without movement (see Scrolling in [Pointing stick](#pointing-stick-in-progress)). Tested on the T420: both axes; the defaults (20 counts per wheel step, sideways dead zone 2 counts per report) are fine, `tp scroll` tunes them
+  - [ ] Smooth scrolling (`CONFIG_ZMK_POINTING_SMOOTH_SCROLLING`, the HID resolution multiplier) for steps finer than three lines; then the scrolling defaults again
   - [ ] Sensitivity and smoothing: the stick's own settings (sensitivity, negative inertia, plateau speed, drift time, press-to-select; see the table in [Pointing stick](#pointing-stick-in-progress)), written after each start since a power cycle clears them, and ZMK input processors (scaling); kept in settings, changed with keys (later ZMK Studio)
   - [ ] Power, see below
   - TP2 (FFC2) comes with `rethink_t480`
@@ -66,7 +68,7 @@ Next, in this order:
 - [ ] Shields: `rethink_t480`, `rethink_l14`
 - [ ] Bluetooth: the T420 build doesn't pair with a Samsung TV (Windows and Android pair fine). Not looked into: the TV, ZMK, or the mouse in the HID descriptor since pointing
 - [ ] Self-test after programming, for user-built boards: check the adapter (I2C) and other parts at boot and report a fault without a serial log, e.g. a sequence of red blinks
-- [ ] ZMK Studio: change the keymap at runtime without rebuilding (swap Fn and LCtrl, Fn-layer and unused keys) and pick ISO or ANSI, which Studio offers when a shield defines both physical layouts. Needs key positions in each physical layout, an ANSI transform per keyboard, a `&studio_unlock` key (ThinkVantage on the T420), spare layers, and Studio over USB (a CDC ACM port on the device_next stack, which the log and shell snippets use now) and Bluetooth
+- [ ] ZMK Studio: change the keymap at runtime without rebuilding (swap Fn and LCtrl, Fn-layer and unused keys) and pick ISO or ANSI, which Studio offers when a shield defines both physical layouts. Needs key positions in each physical layout, an ANSI transform per keyboard (the T420 has one layout for both now, which ISO and ANSI layouts would map onto), a `&studio_unlock` key (ThinkVantage on the T420), spare layers, and Studio over USB (a CDC ACM port on the device_next stack, which the log and shell snippets use now) and Bluetooth
 
 ## Software stack
 
@@ -305,10 +307,10 @@ Build with `-Snippet rethink-usb-log` to see `position: N` for each key in the l
 
 ### `rethink_t420`
 
-ThinkPad T420 keyboard on the Mezzanine connector (2x20 pins). Mapped with `rethink_scanner` on a Norwegian T420 keyboard.
+ThinkPad T420 keyboard on the Mezzanine connector (2x20 pins). Mapped with `rethink_scanner` on a Norwegian (ISO) and an ANSI T420 keyboard.
 
 - **Everything from `rethink_bare_tester` except its matrix**, as `rethink_l420`.
-- **Matrix:** the T420's 96 keys (ISO) as the physical layout `t420_layout`: the keyboard, the buttons above it, Fn on HOTKEY and the power button on PWRSWITCH.
+- **Matrix:** the physical layout `t420_layout`: the keyboard, the buttons above it, Fn on HOTKEY and the power button on PWRSWITCH; 96 keys on ISO, 95 on ANSI. The two differ in three positions: ANSI has `\` above Enter (BSLH), ISO has `#` left of Enter and `\` right of LShift (NUHS, NUBS); Enter is the same. The layout holds all 97, so one firmware runs either keyboard.
 - **Buttons above the keyboard:** mute, volume down, volume up, mic mute (sends F20, which Linux treats as mic mute). ThinkVantage and power send nothing. The keys left and right of Up are browser back and forward.
 - **Keymap:** standard key codes by position, as `rethink_l420`. Fn does what the keycaps show:
 
