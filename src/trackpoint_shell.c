@@ -177,6 +177,29 @@ static int cmd_rate(const struct shell *sh, size_t argc, char **argv) {
     return 0;
 }
 
+#if IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_SCROLL)
+static int cmd_scroll(const struct shell *sh, size_t argc, char **argv) {
+    int divisor;
+    int dead_zone;
+
+    rethink_tp_scroll_get(&divisor, &dead_zone);
+    if (argc > 1) {
+        divisor = atoi(argv[1]);
+    }
+    if (argc > 2) {
+        dead_zone = atoi(argv[2]);
+    }
+    if (rethink_tp_scroll_set(divisor, dead_zone)) {
+        shell_error(sh, "Divisor 1-255, dead zone 0-127");
+        return -EINVAL;
+    }
+
+    shell_print(sh, "%d counts per wheel step; sideways: %d counts per report don't scroll",
+                divisor, dead_zone);
+    return 0;
+}
+#endif
+
 static int cmd_stat(const struct shell *sh, size_t argc, char **argv) {
     struct rethink_tp_stats s;
 
@@ -222,6 +245,11 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
                   "[seconds]: show what the stick sends (default 5); while pointing, the packets",
                   cmd_read, 1, 1),
     SHELL_CMD_ARG(rate, NULL, "[10|20|40|60|80|100|200]: reports per second", cmd_rate, 1, 1),
+#if IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_SCROLL)
+    SHELL_CMD_ARG(scroll, NULL,
+                  "[divisor [dead zone]]: counts per wheel step, sideways counts that don't scroll",
+                  cmd_scroll, 1, 2),
+#endif
     SHELL_CMD_ARG(stat, NULL, "[clear]: link counters and clock period", cmd_stat, 1, 1),
     SHELL_SUBCMD_SET_END);
 

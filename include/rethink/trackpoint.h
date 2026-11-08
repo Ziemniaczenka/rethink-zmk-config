@@ -53,6 +53,12 @@ int rethink_tp_set_rate(int rate);
 // The rate set, and the stick's present one (0 when not pointing)
 void rethink_tp_rate_get(int *set, int *now);
 
+// Scrolling with the middle button held (CONFIG_RETHINK_TRACKPOINT_SCROLL):
+// stick counts per wheel step (1-255) and the sideways counts per report
+// that don't scroll (0-127), until the next reset. -EINVAL out of range.
+int rethink_tp_scroll_set(int divisor, int dead_zone);
+void rethink_tp_scroll_get(int *divisor, int *dead_zone);
+
 // While pointing: streaming off, the present X, Y and Z forces become the
 // zero point (E2 51, about 310 ms), streaming on. -ENODEV when not pointing.
 int rethink_tp_recalibrate(void);

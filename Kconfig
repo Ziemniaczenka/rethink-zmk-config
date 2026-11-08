@@ -340,6 +340,35 @@ config RETHINK_TRACKPOINT_SLOW_IDLE
 	  With a T420 stick at 100/s: 19.1 instead of 20.5 mA while still.
 	  For sticks where a faster rate is worth having.
 
+config RETHINK_TRACKPOINT_SCROLL
+	bool "Middle button held: the stick scrolls"
+	default y
+	help
+	  While the middle button is held, movement turns into the wheel:
+	  each report's stronger axis, vertical, or sideways once that passes
+	  RETHINK_TRACKPOINT_SCROLL_H_DEAD_ZONE. Letting the middle button go
+	  clicks it only if the stick didn't move. "tp scroll" changes the
+	  numbers until the next reset.
+
+config RETHINK_TRACKPOINT_SCROLL_DIVISOR
+	int "Stick counts per wheel step"
+	default 20
+	range 1 255
+	depends on RETHINK_TRACKPOINT_SCROLL
+	help
+	  Larger scrolls slower. One wheel step is usually three lines.
+
+config RETHINK_TRACKPOINT_SCROLL_H_DEAD_ZONE
+	int "Sideways counts per report that don't scroll"
+	default 2
+	range 0 127
+	depends on RETHINK_TRACKPOINT_SCROLL
+	help
+	  Horizontal scrolling only for a report with more sideways counts
+	  than this, and only from the excess, so a push up that leans a
+	  little doesn't scroll sideways. A report with more vertical than
+	  sideways counts scrolls only vertically.
+
 config RETHINK_TRACKPOINT_INIT_PRIORITY
 	int "Init priority"
 	default 92

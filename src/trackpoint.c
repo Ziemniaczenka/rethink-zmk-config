@@ -22,12 +22,17 @@
 // can drop the report rate to 80/s while the stick is still (fewer force
 // measurements) and powers the stick off after a while without use.
 //
+// With the middle button held, movement scrolls instead (vertical, or
+// sideways when that is clearly stronger); the middle button clicks only if
+// let go without movement.
+//
 // The stick calibrates itself: its zero point is set at the self-test, and
 // again whenever the force stays constant for 0.53 s (hands off: drift
 // correction). E2 51 sets it to the present forces on request.
 
 #define DT_DRV_COMPAT rethink_trackpoint
 
+#include <stdlib.h>
 #include <string.h>
 
 #include <zephyr/device.h>
@@ -116,6 +121,7 @@ static int conversions(int rate) { return rate == 60 ? 120 : rate >= 100 ? 100 :
 
 // First packet byte: buttons, a bit that is always 1, sign bits
 #define PKT_BUTTONS 0x07
+#define PKT_MIDDLE BIT(2)
 #define PKT_ALWAYS_1 BIT(3)
 #define PKT_X_SIGN BIT(4)
 #define PKT_Y_SIGN BIT(5)
@@ -168,6 +174,23 @@ static atomic_t rate_set = ATOMIC_INIT(RATE);
 static uint8_t rate_now;
 // Uptime (ms) of the last packet with movement
 static uint32_t last_move;
+
+#define SCROLL IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_SCROLL)
+#if SCROLL
+// Stick counts per wheel step; sideways counts per report that don't scroll
+static atomic_t scroll_divisor = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SCROLL_DIVISOR);
+static atomic_t scroll_dead_zone = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SCROLL_H_DEAD_ZONE);
+#endif
+// Counts while the middle button is held: more than this, and letting it go
+// doesn't click
+#define CLICK_SLOP 4
+static struct {
+    bool held;
+    int moved;
+    // Counts not yet a wheel step
+    int wheel;
+    int hwheel;
+} scroll;
 // Held while the stick is started, recalibrated or powered off
 static K_MUTEX_DEFINE(start_lock);
 
@@ -459,6 +482,7 @@ static const struct device *tp_dev(void) { return DEVICE_DT_INST_GET(0); }
 
 // Buttons still held go up, so ZMK doesn't keep them pressed
 static void release_buttons(void) {
+    scroll.held = false;
     for (int i = 0; i < 3; i++) {
         if (buttons & BIT(i)) {
             buttons &= ~BIT(i);
@@ -477,29 +501,129 @@ void rethink_tp_set_raw(void) {
 }
 
 // PS/2 bit 0 left, 1 right, 2 middle: ZMK's mouse buttons 1, 2, 3
+// The input events of one packet; the last one syncs
+struct events {
+    struct {
+        uint8_t type;
+        uint16_t code;
+        int32_t value;
+    } ev[5];
+    int n;
+};
+
+static void add_event(struct events *e, uint8_t type, uint16_t code, int32_t value) {
+    e->ev[e->n].type = type;
+    e->ev[e->n].code = code;
+    e->ev[e->n].value = value;
+    e->n++;
+}
+
+static void send_events(struct events *e) {
+    for (int i = 0; i < e->n; i++) {
+        input_report(tp_dev(), e->ev[i].type, e->ev[i].code, e->ev[i].value, i == e->n - 1,
+                     K_FOREVER);
+    }
+    e->n = 0;
+}
+
+#if SCROLL
+// Counts to wheel steps, the remainder kept for the next report
+static int steps(int *acc, int counts) {
+    int divisor = atomic_get(&scroll_divisor);
+    int n;
+
+    *acc += counts;
+    n = *acc / divisor;
+    *acc -= n * divisor;
+    return n;
+}
+
+// The stronger axis of the report scrolls; sideways only past the dead zone,
+// so a push up that leans a little doesn't scroll sideways. PS/2 and HID
+// both count up and right as positive here.
+static void scroll_by(struct events *e, int dx, int dy) {
+    int dead = atomic_get(&scroll_dead_zone);
+    int n = 0;
+
+    scroll.moved += abs(dx) + abs(dy);
+    if (abs(dy) >= abs(dx)) {
+        n = steps(&scroll.wheel, dy);
+        if (n) {
+            add_event(e, INPUT_EV_REL, INPUT_REL_WHEEL, n);
+        }
+    } else if (abs(dx) > dead) {
+        n = steps(&scroll.hwheel, dx > 0 ? dx - dead : dx + dead);
+        if (n) {
+            add_event(e, INPUT_EV_REL, INPUT_REL_HWHEEL, n);
+        }
+    }
+}
+#endif
+
 static void report(const uint8_t p[3]) {
+    // PS/2 counts up as positive
     int dx = p[1] - ((p[0] & PKT_X_SIGN) ? 256 : 0);
-    // PS/2 counts up as positive, HID down
-    int dy = -(p[2] - ((p[0] & PKT_Y_SIGN) ? 256 : 0));
-    uint8_t changed = (p[0] & PKT_BUTTONS) ^ buttons;
+    int dy = p[2] - ((p[0] & PKT_Y_SIGN) ? 256 : 0);
+    uint8_t pressed = p[0] & PKT_BUTTONS;
+    bool click = false;
+    struct events e = {.n = 0};
 
     if (dx || dy) {
         last_move = k_uptime_get_32();
     }
+
+#if SCROLL
+    if (pressed & PKT_MIDDLE) {
+        if (!scroll.held) {
+            scroll.held = true;
+            scroll.moved = scroll.wheel = scroll.hwheel = 0;
+        }
+        scroll_by(&e, dx, dy);
+        dx = dy = 0;
+    } else if (scroll.held) {
+        scroll.held = false;
+        click = scroll.moved <= CLICK_SLOP;
+    }
+    pressed &= ~PKT_MIDDLE;
+#endif
+
     if (dx) {
-        input_report_rel(tp_dev(), INPUT_REL_X, dx, !dy && !changed, K_FOREVER);
+        add_event(&e, INPUT_EV_REL, INPUT_REL_X, dx);
     }
     if (dy) {
-        input_report_rel(tp_dev(), INPUT_REL_Y, dy, !changed, K_FOREVER);
+        // HID counts down as positive
+        add_event(&e, INPUT_EV_REL, INPUT_REL_Y, -dy);
     }
     for (int i = 0; i < 3; i++) {
-        if (changed & BIT(i)) {
-            changed &= ~BIT(i);
+        if ((pressed ^ buttons) & BIT(i)) {
             buttons ^= BIT(i);
-            input_report_key(tp_dev(), INPUT_BTN_0 + i, buttons & BIT(i), !changed, K_FOREVER);
+            add_event(&e, INPUT_EV_KEY, INPUT_BTN_0 + i, (buttons & BIT(i)) != 0);
         }
     }
+    send_events(&e);
+
+    if (click) {
+        input_report_key(tp_dev(), INPUT_BTN_2, 1, true, K_FOREVER);
+        input_report_key(tp_dev(), INPUT_BTN_2, 0, true, K_FOREVER);
+    }
 }
+
+#if SCROLL
+int rethink_tp_scroll_set(int divisor, int dead_zone) {
+    if (divisor < 1 || divisor > 255 || dead_zone < 0 || dead_zone > 127) {
+        return -EINVAL;
+    }
+
+    atomic_set(&scroll_divisor, divisor);
+    atomic_set(&scroll_dead_zone, dead_zone);
+    return 0;
+}
+
+void rethink_tp_scroll_get(int *divisor, int *dead_zone) {
+    *divisor = atomic_get(&scroll_divisor);
+    *dead_zone = atomic_get(&scroll_dead_zone);
+}
+#endif
 
 // Reply bytes after an acknowledge
 static int read_reply(uint8_t *buf, size_t len, k_timeout_t first) {
