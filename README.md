@@ -4,6 +4,11 @@ ZMK firmware for the [ReThink Keyboard](https://github.com/Ziemniaczenka/ReThink
 
 > Work in progress. Shields so far: the testers `rethink_bare_tester` and `rethink_hw_tester`, the matrix scanner `rethink_scanner`, and the keyboards `rethink_l420` and `rethink_t420`.
 
+> [!IMPORTANT]
+> Most of this repository is vibe-coded and may not follow best practices. I test it on my hardware before pushing commits but use it at your own risk.
+
+
+
 ## Roadmap
 
 - [x] Container build (local and CI), flashing over USB, bare Control Board tester
@@ -78,11 +83,11 @@ All pinned by commit in [config/west.yml](config/west.yml):
 | --- | --- | --- |
 | ZMK | [zmkfirmware/zmk#3387](https://github.com/zmkfirmware/zmk/pull/3387) (`petejohanson/zmk`) | Draft port of ZMK to Zephyr 4.4; matrix scanning uses Zephyr's input API |
 | Zephyr | [FrameworkComputer/zephyr#2](https://github.com/FrameworkComputer/zephyr/pull/2) | Zephyr 4.5 with the `framework_wireless_tp_kb` board |
-| framework-cb | [Ziemniaczenka/zmk-config-fw-cb](https://github.com/Ziemniaczenka/zmk-config-fw-cb), fork of [Shaedil/zmk-config-fw-cb](https://github.com/Shaedil/zmk-config-fw-cb) | ZMK board variant `framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk`: USB HID on y07uyy stack, USB/Bluetooth mode switch, charger, y07uyyMCUboot signing, and the patches that let y07uyyphyr 4.5 |
+| framework-cb | [Ziemniaczenka/zmk-config-fw-cb](https://github.com/Ziemniaczenka/zmk-config-fw-cb), fork of [Shaedil/zmk-config-fw-cb](https://github.com/Shaedil/zmk-config-fw-cb) | ZMK board variant `framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk`: USB HID on Zephyr's `device_next` stack, USB/Bluetooth mode switch, charger, fuel gauge, watchdog, MCUboot signing, and the patches that let ZMK #3387 build on Zephyr 4.5 |
 
-The patches from y07uyyME says what each one does) and from `patchesy07uyypplied to the ZMK and Zephyr checkouts y07uyy is edited by hand.
+The patches from framework-cb (its README says what each one does) and from `patches/` here, if any, are applied to the ZMK and Zephyr checkouts at build time. Nothing is edited by hand.
 
-## Requirements (y07uyy
+## Requirements (Windows)
 
 - Docker Desktop
 - For flashing over USB: `mcumgr`, installed with [Go](https://go.dev/dl/):
