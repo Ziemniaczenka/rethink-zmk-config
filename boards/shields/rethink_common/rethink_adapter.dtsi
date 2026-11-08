@@ -56,6 +56,8 @@
 };
 
 // U1 pins for the shields
+#define RETHINK_EXP_TP1_RST 8      // P1_0, Mezzanine/FFC1 pointing stick reset
+#define RETHINK_EXP_TP2_RST 9      // P1_1, FFC2 pointing stick reset
 #define RETHINK_EXP_LEDPWR 10      // P1_2, power LED (Mezzanine) / Fn lock (FFC2)
 #define RETHINK_EXP_LEDMUTE 11     // P1_3
 #define RETHINK_EXP_LEDMICMUTE 12  // P1_4

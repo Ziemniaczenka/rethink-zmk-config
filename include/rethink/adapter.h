@@ -39,6 +39,11 @@ const char *rethink_bl_detect_name(enum rethink_bl_detect state);
 // CONFIG_RETHINK_BOOST_EN_TIED (the boost then follows VLED_BL)
 int rethink_adapter_boost_set(bool on);
 
+// Charge pump (TP_5V). Only with TP_3V3 on: U2's EN may not exceed its supply.
+// -ENODEV without the adapter, -ENOTSUP without pump-en-gpios or with
+// CONFIG_RETHINK_PUMP_EN_TIED (the pump then follows TP_3V3)
+int rethink_adapter_pump_set(bool on);
+
 // -ENODEV without the adapter, -ENOTSUP if the keyboard has no such LED
 int rethink_adapter_led_set(enum rethink_led led, bool on);
 

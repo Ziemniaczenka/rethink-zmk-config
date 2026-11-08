@@ -1,0 +1,47 @@
+# Copyright (c) 2026 Ziemniaczenka
+# SPDX-License-Identifier: MIT
+
+description: |
+  Pointing stick (TrackPoint) on the ReThink adapter: its power, its reset
+  and the PS/2 link to it.
+
+  TP1 (Mezzanine, FFC1) and TP2 (FFC2) share the Control Board's FW_CLK and
+  FW_DAT lines; the jumpers and Kconfig symbols in config/rethink.conf choose
+  each one's supply (RETHINK_TP1_SUPPLY_*, RETHINK_TP2_SUPPLY_*). On 5 V the
+  charge pump runs while the stick is powered. The reset is active high and
+  a resistor to the stick's supply holds it in reset until the expander
+  drives it low (TP2 with R23: running unless driven high).
+
+compatible: "rethink,trackpoint"
+
+properties:
+  clk-gpios:
+    type: phandle-array
+    required: true
+    description: FW_CLK (P1.16), open-drain, R6 pull-up to TP_3V3.
+
+  data-gpios:
+    type: phandle-array
+    required: true
+    description: FW_DAT (P1.15), open-drain, R7 pull-up to TP_3V3.
+
+  reset-gpios:
+    type: phandle-array
+    required: true
+    description: TP1_RST or TP2_RST on the expander (rethink_expander).
+
+  power-supply:
+    type: phandle
+    required: true
+    description: Regulator for TP_3V3 (Control Board P3.12).
+
+  tp2:
+    type: boolean
+    description: The FFC2 stick (TP2) instead of TP1.
+
+  reset-ms:
+    type: int
+    default: 600
+    description: |
+      Time the reset is held after power is applied. The TrackPoint
+      specification times its power-on reset at 600 ms +-20 %.

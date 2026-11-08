@@ -6,7 +6,8 @@
  * keys, mapped with scripts/matrix_scan.py on two Norwegian L420 keyboards;
  * the comments name the keys by their UK ISO legends.
  * The TrackPoint and its buttons are on the 8-pin cable (J5), not in the
- * matrix, and not supported yet. The keyboard has no backlight and no
+ * matrix: TP1, a mouse.
+ * The keyboard has no backlight and no
  * status LEDs: BUCK1 stays off from boot and the expander's LED pins rest on
  * their pull-ups.
  */
@@ -16,6 +17,7 @@
 #include "../rethink_common/rethink_cb.dtsi"
 #include "../rethink_common/rethink_adapter.dtsi"
 #include "../rethink_common/rethink_adapter_matrix.dtsi"
+#include "../rethink_common/rethink_trackpoint.dtsi"
 
 / {
     chosen {

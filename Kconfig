@@ -137,6 +137,8 @@ config RETHINK_PAIRING_BUTTON
 	depends on ZMK_BLE
 	depends on $(dt_nodelabel_enabled,pairing_button)
 	select INPUT
+	# ZMK_POINTING defaults it to n
+	select INPUT_GPIO_KEYS
 	select REBOOT
 	help
 	  Tap: next Bluetooth profile. Hold, then release: clear the active
@@ -211,6 +213,8 @@ config RETHINK_WIRED_OFF
 	depends on ZMK_USB
 	depends on $(dt_nodelabel_enabled,protocol_switch)
 	depends on $(dt_nodelabel_enabled,pairing_button)
+	# Reads the mode switch (gpio-keys), which ZMK_POINTING defaults to n
+	select INPUT_GPIO_KEYS
 	select POWEROFF
 	select PM_DEVICE
 	help
@@ -286,6 +290,55 @@ module-str = ReThink matrix
 source "subsys/logging/Kconfig.template.log_config"
 
 endif # RETHINK_MATRIX
+
+DT_COMPAT_RETHINK_TRACKPOINT := rethink,trackpoint
+
+config RETHINK_TRACKPOINT
+	bool "Pointing stick on the adapter (PS/2)"
+	default $(dt_compat_enabled,$(DT_COMPAT_RETHINK_TRACKPOINT))
+	depends on RETHINK_ADAPTER
+	select GPIO
+	select INPUT
+	select REGULATOR
+	help
+	  Power, reset, PS/2 link and pointing of the rethink,trackpoint stick.
+	  The link is bit-banged: an interrupt on each falling clock edge. The
+	  stick starts after boot and reports movement and buttons as input
+	  events (zmk,input-listener, ZMK_POINTING). Without an answer from a
+	  stick it is powered off again.
+
+if RETHINK_TRACKPOINT
+
+config RETHINK_TRACKPOINT_INIT_PRIORITY
+	int "Init priority"
+	default 92
+	help
+	  After RETHINK_ADAPTER_INIT_PRIORITY.
+
+config RETHINK_TRACKPOINT_THREAD_STACK_SIZE
+	int "Thread stack size"
+	default 1024
+	help
+	  The thread starts the stick after boot, then reports its packets.
+
+config RETHINK_TRACKPOINT_THREAD_PRIORITY
+	int "Thread priority"
+	default 5
+
+config RETHINK_TRACKPOINT_SHELL
+	bool "tp shell commands"
+	default y
+	depends on SHELL
+	help
+	  Power the stick, send it bytes and show what it sends, with link
+	  error counters and its clock period. The rethink-usb-shell snippet
+	  provides the shell.
+
+module = RETHINK_TRACKPOINT
+module-str = ReThink pointing stick
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # RETHINK_TRACKPOINT
 
 DT_COMPAT_RETHINK_BACKLIGHT := rethink,backlight
 

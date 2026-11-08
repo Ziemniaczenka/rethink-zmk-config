@@ -27,6 +27,14 @@ if(CONFIG_RETHINK_ADAPTER_TEST)
   target_sources(app PRIVATE src/adapter_test.c)
 endif()
 
+if(CONFIG_RETHINK_TRACKPOINT)
+  target_sources(app PRIVATE src/trackpoint.c)
+endif()
+
+if(CONFIG_RETHINK_TRACKPOINT_SHELL)
+  target_sources(app PRIVATE src/trackpoint_shell.c)
+endif()
+
 if(CONFIG_RETHINK_BACKLIGHT)
   target_sources(app PRIVATE src/backlight.c)
 endif()

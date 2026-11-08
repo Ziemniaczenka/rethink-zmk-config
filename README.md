@@ -19,7 +19,14 @@ ZMK firmware for the [ReThink Keyboard](https://github.com/Ziemniaczenka/ReThink
 Next, in this order:
 
 - [ ] Shield `rethink_t420` (Mezzanine): keymap from the scan, buttons above the keyboard, Fn layer per the keycaps, Caps Lock LED. Built, not yet tested on the keyboard
-- [ ] TrackPoint: power and reset sequencing, PS/2 driver
+- [ ] TrackPoint, TP1 on the T420 and L420 (see [Pointing stick](#pointing-stick-in-progress)):
+  - [x] Power, reset and the bit-banged PS/2 link, `tp` shell commands. Tested on the T420: ID 01/0e, 14.7 kHz, no bit errors on USB, one byte in ~1500 broken off with Bluetooth
+  - [x] Pointing: start at boot (self-test, ID, streaming on), packets to ZMK's pointing input over USB and Bluetooth, the stick's buttons. Built, not yet tested
+  - [ ] Mouse buttons on keys for the T420 (its buttons are on the palmrest), e.g. on a layer while the stick moves
+  - [ ] If Bluetooth costs more packets than it does now: receive through UARTE20 instead (a PS/2 byte is UART 8O1 at the stick's clock rate) and keep bit-banging for sending
+  - [ ] Power: the stick off after inactivity and on with the next key, its current measured
+  - [ ] Settings: sensitivity, press-to-select, scrolling with the middle button
+  - TP2 (FFC2) comes with `rethink_t480`
 - [ ] Battery: fuel gauge model of the real cell (the "Example" model reads 50 % at 4155 mV), charge-current reading (fuel gauge +525 mA, meter 440 mA), discharge limit (200 mA, 1 A with the backlight), USB 1.5 A, low-battery cutoff
 - [ ] Idle current on Bluetooth. Measured on battery with a multimeter:
 
@@ -41,6 +48,7 @@ Next, in this order:
 - [ ] Control Board LEDs: the blue LED sometimes misbehaves (`CONFIG_RETHINK_CONNECTED_LED`, to be described); PWM brightness control (RGB especially); RGB as charging indicator; battery level, charging and backlight-level animations on the white LEDs
 - [ ] Shields: `rethink_t480`, `rethink_l14`
 - [ ] Self-test after programming, for user-built boards: check the adapter (I2C) and other parts at boot and report a fault without a serial log, e.g. a sequence of red blinks
+- [ ] ZMK Studio: change the keymap at runtime without rebuilding (swap Fn and LCtrl, Fn-layer and unused keys) and pick ISO or ANSI, which Studio offers when a shield defines both physical layouts. Needs key positions in each physical layout, an ANSI transform per keyboard, a `&studio_unlock` key (ThinkVantage on the T420), spare layers, and Studio over USB (a CDC ACM port on the device_next stack, which the log and shell snippets use now) and Bluetooth
 
 ## Software stack
 
@@ -163,9 +171,9 @@ All of them log at ZMK debug level.
 | `CONFIG_RETHINK_BOOST_EN_TIED` | n | Adapter JP2 closed | BOOST_EN (P0_1) left as an input |
 | `CONFIG_RETHINK_BACKLIGHT_SUPPLY_BUCK1` / `_VBAT` / `_VSYS` | BUCK1 | Control Board R62 / R59 (VBAT) / VSYS on the next revision | BUCK1: the regulator is switched with the backlight |
 | `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY` | 10 (range 1-10) | | Duty cycle at 100 % brightness, to stay within the supply's current. Capped at 10 % until real keyboards are measured |
-| `CONFIG_RETHINK_TP1_SUPPLY_5V` / `_3V3` | 5V | Adapter JP6 (+ JP4, JP5) | For the TrackPoint support (not implemented yet) |
-| `CONFIG_RETHINK_TP2_SUPPLY_3V3` / `_5V` | 3V3 | Adapter JP7 (+ JP8, JP9) | For the TrackPoint support |
-| `CONFIG_RETHINK_TP2_RESET_PULL_UP` / `_DOWN` | pull-up | Adapter R22 / R23 | For the TrackPoint support |
+| `CONFIG_RETHINK_TP1_SUPPLY_5V` / `_3V3` | 5V | Adapter JP6 (+ JP4, JP5) | Read by the pointing stick driver |
+| `CONFIG_RETHINK_TP2_SUPPLY_3V3` / `_5V` | 3V3 | Adapter JP7 (+ JP8, JP9) | Read by the pointing stick driver |
+| `CONFIG_RETHINK_TP2_RESET_PULL_UP` / `_DOWN` | pull-up | Adapter R22 / R23 | Read by the pointing stick driver |
 | `CONFIG_RETHINK_MCUBOOT_NEEDS_POWER_CYCLE` | y | Factory MCUboot (Framework's daisy branch before 2026-10-16) | The recovery hold power-cycles through the nPM1300; n: soft reset |
 
 The expander pin map, the jumpers and which keyboard uses which pin are in the hardware repository: [docs/pinouts/io_expander.md](https://github.com/Ziemniaczenka/ReThink_Keyboard/blob/main/docs/pinouts/io_expander.md).
@@ -271,7 +279,7 @@ ThinkPad L420 keyboard on FFC1 (30-pin matrix cable in J4). Mapped with `rethink
 
   Battery (F3), wireless (F5), camera (F6), pointing device (F8), hibernate (F12) and zoom (Space) have no standard key code. The embedded keypad sends the digits on 7-9, U-O, J-L and M, and `/ * - +` on 0, P, `;` and `/` (UK ISO legends), independent of the host's Num Lock.
 - **Not on this keyboard:** backlight (BUCK1 stays off from boot) and status LEDs; the expander's LED pins rest on their pull-ups.
-- **Not yet:** the TrackPoint (8-pin cable in J5) and its buttons, which go to the stick, not the matrix.
+- **TrackPoint** (8-pin cable in J5; its buttons go to the stick, not the matrix): a mouse, see [Pointing stick](#pointing-stick-in-progress).
 - **Name:** "ReThink L420".
 
 Build with `-Snippet rethink-usb-log` to see `position: N` for each key in the log.
@@ -295,8 +303,32 @@ ThinkPad T420 keyboard on the Mezzanine connector (2x20 pins). Mapped with `reth
   Battery (F3), wireless (F5), camera (F6), pointing device (F8), hibernate (F12), ThinkLight (PgUp) and zoom (Space) have no standard key code. The embedded keypad is the same as on `rethink_l420`.
 - **Caps Lock LED** (Mezzanine 21) follows the host. The power, mute and mic mute LEDs rest on their pull-ups.
 - **Not on this keyboard:** backlight. KBDID0-2 (Mezzanine 25, 27, 29) meet the adapter's backlight PWM, GND and BL_5V, so keep JP3 open; P1.17 stays unused.
-- **Not yet:** the TrackPoint (Mezzanine 37-40).
+- **TrackPoint** (Mezzanine 37-40): a mouse, see [Pointing stick](#pointing-stick-in-progress).
 - **Name:** "ReThink T420".
+
+### Pointing stick (in progress)
+
+`rethink_trackpoint.dtsi` adds the TP1 stick (Mezzanine 37-40, FFC1 J5) to a keyboard shield; `rethink_t420` and `rethink_l420` include it. The driver (`rethink,trackpoint`, `src/trackpoint.c`) starts the stick after boot and reports it to ZMK as a mouse (`CONFIG_ZMK_POINTING`, on for shields with the stick), over USB and Bluetooth. Without an answer from a stick (none connected) it powers it off again. Wired power-off switches it off before System OFF. Sensitivity and the stick's own power saving come later; it stays powered while the keyboard runs.
+
+- **Power:** TP_3V3 (P3.12), then the charge pump for a 5 V stick (`CONFIG_RETHINK_TP1_SUPPLY_5V`, JP6 1-2), all with the reset held. The reset (TP1_RST, active high, R14 pull-up to the stick's supply) is released 600 ms later, the power-on reset time of the TrackPoint specification.
+- **PS/2 link:** FW_CLK (P1.16) and FW_DAT (P1.15), through the PCA9306 for a 5 V stick. The stick clocks every bit (a T420 stick at about 14.7 kHz); an interrupt on each falling clock edge reads DATA or sets the next bit.
+- **Start:** self-test result `aa 00`, TrackPoint ID (`e1`, logged), streaming on (`f4`).
+- **Pointing:** 3-byte packets every 10 ms while the stick moves, assembled in the interrupt. A pause, or a byte lost to an error, starts the next packet afresh. Movement goes out as relative X/Y, the packet's left, right and middle buttons as mouse buttons 1-3. A T420 keyboard has no buttons of its own (they are on the palmrest); pressing the stick down clicks if its press-to-select is on.
+- **Bluetooth:** the keyboard now also describes a mouse. If the pointer doesn't move over Bluetooth, remove the keyboard on the computer and pair it again.
+
+Build a keyboard with the shell, e.g. `.\build.ps1 -Shield rethink_t420 -Snippet rethink-usb-shell`:
+
+| Command | Does |
+| --- | --- |
+| `tp on` | Powers the stick (or resets it with `ff`) and starts pointing |
+| `tp off` | Powers it off |
+| `tp send <hex> [hex...]` | Sends bytes, showing each acknowledge (`fa`), then the reply. Pauses pointing and turns streaming off first (`f5`) |
+| `tp read [s]` | Shows what the stick sends, one line per packet (default 5 s). Pauses pointing like `send` |
+| `tp stat [clear]` | Bytes and errors both ways, packets reported, the stick's clock period |
+
+Bytes to try: `e1` asks for the TrackPoint ID (`fa`, then the maker: 01 IBM/Lenovo, 02 ALPS, 03 Elan, 04 NXP, and its firmware), `f2` the PS/2 device ID (`fa 00`), `ff` resets (`fa aa 00`), `f4` starts streaming (3-byte packets while the stick moves, see `tp read`), `f5` stops it.
+
+Measured on a T420 stick (ID 01, firmware 0e): no bit errors over USB; with Bluetooth connected, one byte in about 1500 broken off (an interrupt delayed by more than a clock period), which costs that one packet.
 
 ## Repository layout
 
@@ -314,12 +346,12 @@ ThinkPad T420 keyboard on the Mezzanine connector (2x20 pins). Mapped with `reth
 ├── CMakeLists.txt, Kconfig      Module sources and options (CONFIG_RETHINK_*)
 ├── src/                         Pairing button, profile and blue LEDs, adapter control, expander
 │                                registers, matrix, bring-up commands, backlight,
-│                                wired power-off
-├── include/rethink/             Public API (adapter.h, expander.h, backlight.h)
-├── dts/bindings/                rethink,adapter-ctrl, rethink,pcal6416a, rethink,matrix
-│                                and rethink,backlight
+│                                pointing stick, wired power-off
+├── include/rethink/             Public API (adapter.h, expander.h, backlight.h, trackpoint.h)
+├── dts/bindings/                rethink,adapter-ctrl, rethink,pcal6416a, rethink,matrix,
+│                                rethink,backlight and rethink,trackpoint
 ├── boards/shields/              Shields; rethink_common/ holds the shared dtsi files
-│                                (Control Board, adapter, its matrix and full layout,
+│                                (Control Board, adapter, its matrix and full layout, pointing stick,
 │                                backlight, header matrix) and the shields' Kconfig defaults
 └── snippets/                    rethink-usb-log (USB CDC ACM logging),
                                  rethink-usb-shell (shell and log on the same port)
@@ -344,6 +376,8 @@ ThinkPad T420 keyboard on the Mezzanine connector (2x20 pins). Mapped with `reth
 | `CONFIG_RETHINK_ADAPTER_TEST` | n | `adapter` shell commands for bring-up (set by the `rethink-usb-shell` snippet) |
 | `CONFIG_RETHINK_MATRIX` | if `rethink,matrix` in DT | Matrix with expander columns, direct keys and ghost-key blocking |
 | `CONFIG_RETHINK_BACKLIGHT` | if `rethink,backlight` in DT | Backlight power chain, PWM and interlock (use with `CONFIG_ZMK_BACKLIGHT`) |
+| `CONFIG_RETHINK_TRACKPOINT` | if `rethink,trackpoint` in DT | Pointing stick power, reset, PS/2 link and pointing |
+| `CONFIG_RETHINK_TRACKPOINT_SHELL` | y with a shell | `tp` shell commands |
 
 Hardware options: see [Hardware options](#hardware-options).
 

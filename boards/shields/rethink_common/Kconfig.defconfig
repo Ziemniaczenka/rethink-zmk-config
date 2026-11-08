@@ -9,3 +9,9 @@
 # lights it for a few seconds after connecting instead
 config FRAMEWORK_CB_STATUS_LED
     default n
+
+# Shields with a pointing stick (rethink_trackpoint.dtsi) report it as a mouse
+RETHINK_DEFCONFIG_TRACKPOINT := rethink,trackpoint
+
+config ZMK_POINTING
+    default $(dt_compat_enabled,$(RETHINK_DEFCONFIG_TRACKPOINT))

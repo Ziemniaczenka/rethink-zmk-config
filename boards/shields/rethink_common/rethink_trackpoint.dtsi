@@ -1,0 +1,25 @@
+/*
+ * Copyright (c) 2026 Ziemniaczenka
+ * SPDX-License-Identifier: MIT
+ *
+ * TP1 pointing stick (Mezzanine 37-40, FFC1 J5), for keyboard shields. Include
+ * after rethink_adapter.dtsi. FW_DAT and FW_CLK reach the stick through the
+ * PCA9306 level shifter (JP4/JP5 1-2) or directly (2-3). Its movement and
+ * buttons go to ZMK as a mouse (CONFIG_ZMK_POINTING, on by default for
+ * shields with this node).
+ */
+
+/ {
+    trackpoint: trackpoint {
+        compatible = "rethink,trackpoint";
+        data-gpios = <&gpio1 15 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+        clk-gpios = <&gpio1 16 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+        reset-gpios = <&rethink_expander RETHINK_EXP_TP1_RST 0>;
+        power-supply = <&tp_power>;
+    };
+
+    trackpoint_listener: trackpoint_listener {
+        compatible = "zmk,input-listener";
+        device = <&trackpoint>;
+    };
+};

@@ -118,6 +118,22 @@ int rethink_adapter_boost_set(bool on) {
     return err;
 }
 
+int rethink_adapter_pump_set(bool on) {
+    if (!HAS_PUMP_EN) {
+        return -ENOTSUP;
+    }
+    if (!ready) {
+        return -ENODEV;
+    }
+
+    int err = rethink_exp_configure(pump_en, on ? RETHINK_EXP_OUT_HIGH : RETHINK_EXP_OUT_LOW);
+    if (err) {
+        LOG_ERR("Failed to set PUMP_EN (%d)", err);
+    }
+
+    return err;
+}
+
 // Sampled with the pull-up; park_pins() then sets its resting state
 static enum rethink_bl_detect sample_bl_detect(void) {
     uint16_t levels;

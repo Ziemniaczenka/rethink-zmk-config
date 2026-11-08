@@ -11,8 +11,8 @@
  * KBDID0-2 (Mezzanine 25, 27, 29) meet the adapter's backlight PWM, GND and
  * BL_5V: no backlight here, so P1.17 stays unused and JP3 must stay open.
  * The Caps Lock LED (Mezzanine 21) follows the host; the power, mute and mic
- * mute LEDs rest on their pull-ups. The TrackPoint (Mezzanine 37-40) is not
- * supported yet.
+ * mute LEDs rest on their pull-ups. The TrackPoint (Mezzanine 37-40) is TP1,
+ * a mouse; its buttons are on the palmrest, not on the keyboard.
  */
 
 #include <dt-bindings/zmk/matrix_transform.h>
@@ -20,6 +20,7 @@
 #include "../rethink_common/rethink_cb.dtsi"
 #include "../rethink_common/rethink_adapter.dtsi"
 #include "../rethink_common/rethink_adapter_matrix.dtsi"
+#include "../rethink_common/rethink_trackpoint.dtsi"
 
 &rethink_adapter {
     capslock-led-gpios = <&rethink_expander RETHINK_EXP_LEDCPSLOCK 0>;

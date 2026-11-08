@@ -21,6 +21,10 @@
 #include <rethink/adapter.h>
 #endif
 
+#if IS_ENABLED(CONFIG_RETHINK_TRACKPOINT)
+#include <rethink/trackpoint.h>
+#endif
+
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 // Framework's gpio-keys entries: mode switch pressed = Bluetooth
@@ -54,6 +58,10 @@ static void power_off(struct k_work *work) {
 
 #if IS_ENABLED(CONFIG_RETHINK_BACKLIGHT)
     led_set_brightness(DEVICE_DT_GET(DT_CHOSEN(zmk_backlight)), 0, 0);
+#endif
+#if IS_ENABLED(CONFIG_RETHINK_TRACKPOINT)
+    // TP_3V3 (P3.12) would stay on through System OFF
+    rethink_tp_power_off();
 #endif
 #if IS_ENABLED(CONFIG_RETHINK_ADAPTER)
     rethink_adapter_power_down();
