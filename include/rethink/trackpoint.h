@@ -36,8 +36,32 @@ bool rethink_tp_powered(void);
 // True while movement goes to ZMK
 bool rethink_tp_pointing(void);
 
+// TP_OFF, TP_ON, TP_TOG, TP_RECAL, TP_RATE_UP or TP_RATE_DN
+// (dt-bindings/rethink/trackpoint.h), carried out by the stick's thread;
+// TP_TOG and the new rate are decided now. Returns at once, -EINVAL for
+// anything else. The thread also powers the stick off once neither it nor a
+// key was used for CONFIG_RETHINK_TRACKPOINT_IDLE_OFF_MIN; the next key press
+// starts it again.
+int rethink_tp_request(uint32_t cmd);
+
+// Report rate (PS/2 sample rate: 10, 20, 40, 60, 80, 100 or 200 a second;
+// -EINVAL for others), applied by the thread while pointing and at each
+// start; CONFIG_RETHINK_TRACKPOINT_SAMPLE_RATE until changed. With
+// CONFIG_RETHINK_TRACKPOINT_SLOW_IDLE the stick reports at 80/s while still.
+int rethink_tp_set_rate(int rate);
+
+// The rate set, and the stick's present one (0 when not pointing)
+void rethink_tp_rate_get(int *set, int *now);
+
+// While pointing: streaming off, the present X, Y and Z forces become the
+// zero point (E2 51, about 310 ms), streaming on. -ENODEV when not pointing.
+int rethink_tp_recalibrate(void);
+
 // Stops pointing: from now on bytes from the stick queue for rethink_tp_read()
 void rethink_tp_set_raw(void);
+
+// Pointing again after rethink_tp_set_raw(), for a stick still streaming
+void rethink_tp_resume(void);
 
 // One byte to the stick: inhibit, request to send, 8 data bits, odd parity,
 // stop, and the stick's acknowledge bit. Its reply (0xFA, ...) arrives
@@ -59,6 +83,10 @@ struct rethink_tp_stats {
     uint32_t overruns;  // queue full, byte or packet dropped
     uint32_t packets;   // movement packets while pointing
     uint32_t resyncs;   // packets dropped to find the next packet start
+    uint32_t resent;    // packets with an error, sent again on request (0xFE)
+    uint32_t lost;      // packets with an error that didn't come again
+    // Report rate changes while pointing: keys, moving and still
+    uint32_t rate_changes;
     uint32_t tx_bytes;  // sent and acknowledged
     uint32_t tx_timeouts;
     uint32_t tx_nacks;

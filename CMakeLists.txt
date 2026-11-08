@@ -28,7 +28,7 @@ if(CONFIG_RETHINK_ADAPTER_TEST)
 endif()
 
 if(CONFIG_RETHINK_TRACKPOINT)
-  target_sources(app PRIVATE src/trackpoint.c)
+  target_sources(app PRIVATE src/trackpoint.c src/behavior_trackpoint.c)
 endif()
 
 if(CONFIG_RETHINK_TRACKPOINT_SHELL)

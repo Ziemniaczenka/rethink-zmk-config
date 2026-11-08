@@ -45,7 +45,8 @@ static int print_incoming(const struct shell *sh, int32_t window_ms) {
     return count;
 }
 
-// Raw access stops pointing, and streaming (f5) so packets don't get in the way
+// Raw access stops pointing, and streaming (f5) so packets don't get in the
+// way of the replies
 static bool take_raw(const struct shell *sh) {
     if (!rethink_tp_powered()) {
         shell_error(sh, "The stick is off: tp on");
@@ -129,18 +130,50 @@ static int cmd_send(const struct shell *sh, size_t argc, char **argv) {
     return 0;
 }
 
+// While pointing, the packets are shown instead of reported, then pointing
+// resumes
 static int cmd_read(const struct shell *sh, size_t argc, char **argv) {
     int seconds = argc > 1 ? atoi(argv[1]) : 5;
 
-    if (!take_raw(sh)) {
-        return -ENODEV;
-    }
     if (seconds <= 0 || seconds > 60) {
         shell_error(sh, "1-60 seconds");
         return -EINVAL;
     }
+    if (!rethink_tp_powered()) {
+        shell_error(sh, "The stick is off: tp on");
+        return -ENODEV;
+    }
 
+    bool was_pointing = rethink_tp_pointing();
+
+    if (was_pointing) {
+        rethink_tp_set_raw();
+        shell_print(sh, "Packets shown instead of reported for %d s:", seconds);
+    }
     print_incoming(sh, seconds * 1000);
+    if (was_pointing) {
+        rethink_tp_resume();
+        shell_print(sh, "Pointing again");
+    }
+    return 0;
+}
+
+static int cmd_rate(const struct shell *sh, size_t argc, char **argv) {
+    int set;
+    int now;
+
+    if (argc > 1 && rethink_tp_set_rate(atoi(argv[1]))) {
+        shell_error(sh, "Rates: 10, 20, 40, 60, 80, 100, 200");
+        return -EINVAL;
+    }
+
+    rethink_tp_rate_get(&set, &now);
+    if (argc > 1 || !now) {
+        // The thread changes the stick's rate after this
+        shell_print(sh, "%d reports/s", set);
+    } else {
+        shell_print(sh, "%d reports/s set, the stick at %d/s now", set, now);
+    }
     return 0;
 }
 
@@ -154,7 +187,16 @@ static int cmd_stat(const struct shell *sh, size_t argc, char **argv) {
                                                          : "on, raw");
     shell_print(sh, "Received: %u bytes; errors: %u framing, %u parity, %u broken off, %u dropped",
                 s.bytes, s.framing, s.parity, s.gaps, s.overruns);
-    shell_print(sh, "Packets: %u reported, %u resyncs", s.packets, s.resyncs);
+    shell_print(sh, "Packets: %u reported, %u resyncs; with an error: %u sent again, %u lost",
+                s.packets, s.resyncs, s.resent, s.lost);
+
+    int set;
+    int now;
+
+    rethink_tp_rate_get(&set, &now);
+    if (now) {
+        shell_print(sh, "Rate: %d/s set, %d/s now; %u changes", set, now, s.rate_changes);
+    }
     shell_print(sh, "Sent: %u bytes; %u not clocked in, %u not acknowledged", s.tx_bytes,
                 s.tx_timeouts, s.tx_nacks);
     if (s.period_us) {
@@ -176,8 +218,10 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD_ARG(send, NULL,
                   "<hex> [hex...]: bytes to the stick, e.g. e1 (ID), f4 (stream). Pauses pointing",
                   cmd_send, 2, 15),
-    SHELL_CMD_ARG(read, NULL, "[seconds]: show what the stick sends (default 5). Pauses pointing",
+    SHELL_CMD_ARG(read, NULL,
+                  "[seconds]: show what the stick sends (default 5); while pointing, the packets",
                   cmd_read, 1, 1),
+    SHELL_CMD_ARG(rate, NULL, "[10|20|40|60|80|100|200]: reports per second", cmd_rate, 1, 1),
     SHELL_CMD_ARG(stat, NULL, "[clear]: link counters and clock period", cmd_stat, 1, 1),
     SHELL_SUBCMD_SET_END);
 

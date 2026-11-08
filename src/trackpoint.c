@@ -15,8 +15,16 @@
 //
 // While pointing, the interrupt also assembles the 3-byte movement packets:
 // a packet's bytes follow each other within about a millisecond and packets
-// come 10 ms apart, so a pause or a lost byte starts the next packet afresh.
-// A thread reports them as relative movement and buttons (input events).
+// come 5-100 ms apart (200-10/s), so a pause starts the next packet afresh.
+// A thread reports them as relative movement and buttons (input events). A
+// packet with a broken byte is dropped and the thread asks the stick for it
+// again (0xFE). The thread also carries out the requests from keys (&tp),
+// can drop the report rate to 80/s while the stick is still (fewer force
+// measurements) and powers the stick off after a while without use.
+//
+// The stick calibrates itself: its zero point is set at the self-test, and
+// again whenever the force stays constant for 0.53 s (hands off: drift
+// correction). E2 51 sets it to the present forces on request.
 
 #define DT_DRV_COMPAT rethink_trackpoint
 
@@ -28,7 +36,12 @@
 #include <zephyr/input/input.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
 
+#include <zmk/event_manager.h>
+#include <zmk/events/position_state_changed.h>
+
+#include <dt-bindings/rethink/trackpoint.h>
 #include <rethink/adapter.h>
 #include <rethink/expander.h>
 #include <rethink/trackpoint.h>
@@ -51,19 +64,55 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1, "Exactly one rethink,t
 #define TX_TIMEOUT K_MSEC(25)
 // A byte from the stick takes at most 11 clocks of 100 µs
 #define RX_FINISH_US 1200
-// Bytes of one packet arrive about 1 ms apart, packets 10 ms apart
+// Bytes of one packet arrive about 1 ms apart. A pause of half the packet
+// period, at most this, starts the next packet.
 #define PACKET_GAP_US 4000
+// After an error, the rest of the packet: the clock quiet this long
+#define PACKET_END_US 1000
+#define RESEND_ATTEMPTS 3
 // The stick answers a byte within 20 ms (0xFA, then any reply bytes)
-#define REPLY_TIMEOUT K_MSEC(25)
+#define REPLY_MS 25
+#define REPLY_TIMEOUT K_MSEC(REPLY_MS)
 // Its self-test result follows the reset after about 250-500 ms
 #define SELF_TEST_TIMEOUT K_MSEC(1500)
+// E2 51 is acknowledged once the recalibration is done, after about 310 ms
+#define RECALIBRATE_TIMEOUT K_MSEC(1000)
+#define RECALIBRATE_MS 350
+
+#define IDLE_OFF_MS (CONFIG_RETHINK_TRACKPOINT_IDLE_OFF_MIN * 60 * 1000)
 
 #define PS2_ACK 0xfa
 #define PS2_RESEND 0xfe
 #define PS2_RESET 0xff
 #define PS2_ENABLE 0xf4
+#define PS2_DISABLE 0xf5
+#define PS2_SET_RATE 0xf3
 #define PS2_SELF_TEST_OK 0xaa
 #define TP_READ_ID 0xe1
+#define TP_COMMAND 0xe2
+#define TP_RECALIBRATE 0x51
+
+// Report rates (F3 XX)
+static const uint8_t rates[] = {10, 20, 40, 60, 80, 100, 200};
+
+#define RATE CONFIG_RETHINK_TRACKPOINT_SAMPLE_RATE
+BUILD_ASSERT(RATE == 10 || RATE == 20 || RATE == 40 || RATE == 60 || RATE == 80 || RATE == 100 ||
+                 RATE == 200,
+             "PS/2 sample rates: 10, 20, 40, 60, 80, 100, 200");
+
+// Force measurements a second at a report rate (TrackPoint specification
+// 2.4.6): never under 80
+static int conversions(int rate) { return rate == 60 ? 120 : rate >= 100 ? 100 : 80; }
+
+// Still for this long: IDLE_RATE, the fewest measurements
+#define SLOW_IDLE_MS 2000
+#define IDLE_RATE 80
+
+// Requests to the thread: TP_OFF, TP_ON, TP_RECAL, a key press after an idle
+// power-off, a packet with an error, a new report rate
+#define REQ_WAKE (TP_RATE_DN + 1)
+#define REQ_RESEND (TP_RATE_DN + 2)
+#define REQ_RATE (TP_RATE_DN + 3)
 
 // First packet byte: buttons, a bit that is always 1, sign bits
 #define PKT_BUTTONS 0x07
@@ -103,24 +152,55 @@ static K_MUTEX_DEFINE(tx_lock);
 
 // Pointing
 static volatile bool pointing;
+// Replies to a resend request or a rate change go to rx_queue
+static volatile bool commanding;
 static uint8_t pkt[3];
 static uint8_t pkt_len;
 static uint32_t pkt_last;
+// The packet had an error: its other bytes are dropped, it is asked for again
+static volatile bool pkt_broken;
 K_MSGQ_DEFINE(packet_queue, sizeof(pkt), 16, 1);
+// A pause this long starts the next packet
+static volatile uint32_t packet_gap_us = PACKET_GAP_US;
 static uint8_t buttons;
+// Report rate: chosen (Kconfig, keys, shell), and the stick's while pointing
+static atomic_t rate_set = ATOMIC_INIT(RATE);
+static uint8_t rate_now;
+// Uptime (ms) of the last packet with movement
+static uint32_t last_move;
+// Held while the stick is started, recalibrated or powered off
 static K_MUTEX_DEFINE(start_lock);
 
 static struct rethink_tp_stats stats;
 static bool powered;
 
+static atomic_t requests;
+static struct k_poll_signal request_signal = K_POLL_SIGNAL_INITIALIZER(request_signal);
+// Uptime (ms) of the last packet or key press
+static atomic_t last_use;
+// Powered off for lack of use: the next key press starts the stick
+static atomic_t idle_off;
+
+static void post_request(int req) {
+    atomic_or(&requests, BIT(req));
+    k_poll_signal_raise(&request_signal, 0);
+}
+
 // From the interrupt, after each valid byte while pointing
 static void packet_byte(uint8_t byte, uint32_t now) {
-    if (pkt_len > 0 && k_cyc_to_us_floor32(now - pkt_last) > PACKET_GAP_US) {
-        stats.resyncs++;
+    if (k_cyc_to_us_floor32(now - pkt_last) > packet_gap_us) {
+        // The next packet
+        if (pkt_len > 0) {
+            stats.resyncs++;
+        }
         pkt_len = 0;
+        pkt_broken = false;
     }
     pkt_last = now;
 
+    if (pkt_broken) {
+        return;
+    }
     if (pkt_len == 0 && !(byte & PKT_ALWAYS_1)) {
         stats.resyncs++;
         return;
@@ -142,18 +222,48 @@ static void packet_byte(uint8_t byte, uint32_t now) {
 // The parity bit that makes the count of ones odd
 static int odd_parity_bit(uint8_t byte) { return (__builtin_popcount(byte) & 1) == 0; }
 
+// A byte with an error or broken off: while pointing, the thread asks for its
+// packet again
+static void rx_error(uint32_t when) {
+    if (!pointing || commanding) {
+        return;
+    }
+
+    pkt_len = 0;
+    pkt_last = when;
+    if (!pkt_broken) {
+        pkt_broken = true;
+        post_request(REQ_RESEND);
+    }
+}
+
+// A byte still unfinished after RX_FINISH_US lost clock edges. Without this
+// its loss would show only with the next packet, too late to ask again.
+static void byte_timeout(struct k_timer *timer) {
+    unsigned int key = irq_lock();
+
+    if (rx_pos > 0) {
+        stats.gaps++;
+        rx_pos = 0;
+        rx_error(rx_last);
+    }
+    irq_unlock(key);
+}
+
+static K_TIMER_DEFINE(byte_timer, byte_timeout, NULL);
+
 static void rx_edge(int bit, uint32_t now) {
     if (rx_pos > 0 && k_cyc_to_us_floor32(now - rx_last) > GAP_US) {
         stats.gaps++;
         rx_pos = 0;
-        // The packet lost a byte
-        pkt_len = 0;
+        rx_error(rx_last);
     }
     rx_last = now;
 
     if (rx_pos == 0) {
         rx_frame = 0;
         rx_start = now;
+        k_timer_start(&byte_timer, K_USEC(RX_FINISH_US), K_NO_WAIT);
     }
     rx_frame |= (uint16_t)bit << rx_pos;
 
@@ -167,12 +277,12 @@ static void rx_edge(int bit, uint32_t now) {
 
     if ((rx_frame & BIT(0)) || !(rx_frame & BIT(10))) {
         stats.framing++;
-        pkt_len = 0;
+        rx_error(now);
         return;
     }
     if (((rx_frame >> 9) & 1) != odd_parity_bit(byte)) {
         stats.parity++;
-        pkt_len = 0;
+        rx_error(now);
         return;
     }
 
@@ -184,7 +294,7 @@ static void rx_edge(int bit, uint32_t now) {
     stats.period_max_us = MAX(stats.period_max_us, period);
     stats.bytes++;
 
-    if (pointing) {
+    if (pointing && !commanding) {
         packet_byte(byte, now);
     } else if (k_msgq_put(&rx_queue, &byte, K_NO_WAIT)) {
         stats.overruns++;
@@ -250,6 +360,7 @@ static int link_start(void) {
 static void link_stop(void) {
     state = LINK_OFF;
     gpio_pin_interrupt_configure_dt(&clk, GPIO_INT_DISABLE);
+    k_timer_stop(&byte_timer);
     gpio_pin_configure_dt(&clk, GPIO_DISCONNECTED);
     gpio_pin_configure_dt(&dat, GPIO_DISCONNECTED);
 }
@@ -321,21 +432,23 @@ int rethink_tp_power_on(void) {
 }
 
 void rethink_tp_power_off(void) {
-    if (!powered) {
-        return;
-    }
+    atomic_clear(&idle_off);
 
-    rethink_tp_set_raw();
-    link_stop();
-    if (NEEDS_PUMP) {
-        rethink_adapter_pump_set(false);
-    }
-    regulator_disable(supply);
-    // Back to idle-gpios: R14/R22's supply is gone
-    rethink_exp_configure(reset_pin, RETHINK_EXP_IN_PULL_DOWN);
-    powered = false;
+    k_mutex_lock(&start_lock, K_FOREVER);
+    if (powered) {
+        rethink_tp_set_raw();
+        link_stop();
+        if (NEEDS_PUMP) {
+            rethink_adapter_pump_set(false);
+        }
+        regulator_disable(supply);
+        // Back to idle-gpios: R14/R22's supply is gone
+        rethink_exp_configure(reset_pin, RETHINK_EXP_IN_PULL_DOWN);
+        powered = false;
 
-    LOG_INF("Pointing stick off");
+        LOG_INF("Pointing stick off");
+    }
+    k_mutex_unlock(&start_lock);
 }
 
 bool rethink_tp_powered(void) { return powered; }
@@ -355,10 +468,12 @@ static void release_buttons(void) {
 }
 
 void rethink_tp_set_raw(void) {
+    k_mutex_lock(&start_lock, K_FOREVER);
     pointing = false;
     k_msgq_purge(&packet_queue);
     k_msgq_purge(&rx_queue);
     release_buttons();
+    k_mutex_unlock(&start_lock);
 }
 
 // PS/2 bit 0 left, 1 right, 2 middle: ZMK's mouse buttons 1, 2, 3
@@ -368,6 +483,9 @@ static void report(const uint8_t p[3]) {
     int dy = -(p[2] - ((p[0] & PKT_Y_SIGN) ? 256 : 0));
     uint8_t changed = (p[0] & PKT_BUTTONS) ^ buttons;
 
+    if (dx || dy) {
+        last_move = k_uptime_get_32();
+    }
     if (dx) {
         input_report_rel(tp_dev(), INPUT_REL_X, dx, !dy && !changed, K_FOREVER);
     }
@@ -393,17 +511,23 @@ static int read_reply(uint8_t *buf, size_t len, k_timeout_t first) {
     return 0;
 }
 
-// A command byte and its acknowledge; 0xFE asks for the byte again
-static int command(uint8_t cmd) {
+// A command byte and its acknowledge. 0xFE from the stick asks for the byte
+// again; a reply that doesn't come in time (lost to a receive error) is asked
+// for again with 0xFE.
+static int command_wait(uint8_t cmd, k_timeout_t ack_timeout) {
+    uint8_t out = cmd;
+    k_timeout_t timeout = ack_timeout;
+
     for (int attempt = 0; attempt < 3; attempt++) {
         uint8_t reply;
-        int err = rethink_tp_write(cmd);
 
-        if (err) {
+        if (rethink_tp_write(out)) {
             continue;
         }
-        if (rethink_tp_read(&reply, REPLY_TIMEOUT) != 0) {
-            return -ETIMEDOUT;
+        if (rethink_tp_read(&reply, timeout) != 0) {
+            out = PS2_RESEND;
+            timeout = REPLY_TIMEOUT;
+            continue;
         }
         if (reply == PS2_ACK) {
             return 0;
@@ -412,19 +536,74 @@ static int command(uint8_t cmd) {
             LOG_WRN("0x%02x answered with 0x%02x", cmd, reply);
             return -EIO;
         }
+        out = cmd;
     }
 
+    return -ETIMEDOUT;
+}
+
+static int command(uint8_t cmd) { return command_wait(cmd, REPLY_TIMEOUT); }
+
+static void note_use(void) { atomic_set(&last_use, k_uptime_get_32()); }
+
+// Streaming on (F4) or off (F5), sent again until acknowledged: both may be
+// repeated. Packet bytes may come before the acknowledge of F5 (a packet
+// already on its way: dropped) and instead of a lost one of F4 (streaming
+// is on).
+static int stream_set(bool on) {
+    for (int attempt = 0; attempt < 3; attempt++) {
+        int64_t end = k_uptime_get() + REPLY_MS;
+        uint8_t byte;
+
+        if (rethink_tp_write(on ? PS2_ENABLE : PS2_DISABLE)) {
+            continue;
+        }
+        while (rethink_tp_read(&byte, K_MSEC(MAX(end - k_uptime_get(), 0))) == 0) {
+            if (byte == PS2_ACK || (on && byte != PS2_RESEND)) {
+                return 0;
+            }
+            if (byte == PS2_RESEND) {
+                break;
+            }
+        }
+    }
     return -EIO;
+}
+
+static void note_rate(uint8_t rate) {
+    rate_now = rate;
+    packet_gap_us = MIN(PACKET_GAP_US, 500000 / rate);
+}
+
+// A rate that measures the force more than 80 times a second drops to 80/s
+// while the stick is still
+static bool slow_idle(void) {
+    return IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_SLOW_IDLE) &&
+           conversions(atomic_get(&rate_set)) > conversions(IDLE_RATE);
+}
+
+static uint32_t still_ms(void) { return k_uptime_get_32() - last_move; }
+
+// The chosen rate, or IDLE_RATE once the stick is still
+static uint8_t rate_wanted(void) {
+    return slow_idle() && still_ms() >= SLOW_IDLE_MS ? IDLE_RATE : atomic_get(&rate_set);
 }
 
 static int start_locked(void) {
     uint8_t reply[2];
-    int err;
+    int err = 0;
 
     rethink_tp_set_raw();
 
-    // A powered stick gets the reset command instead of a power cycle
-    err = powered ? command(PS2_RESET) : rethink_tp_power_on();
+    // A powered stick gets the reset command; one that doesn't answer it (E2
+    // 44 powered it down, say) a power cycle, which resets it with its pin
+    if (powered && command(PS2_RESET) != 0) {
+        LOG_INF("No answer to the reset command: power cycle");
+        rethink_tp_power_off();
+    }
+    if (!powered) {
+        err = rethink_tp_power_on();
+    }
     if (err == -ENODEV) {
         return err;
     }
@@ -449,7 +628,17 @@ static int start_locked(void) {
         rethink_tp_flush();
     }
 
-    err = command(PS2_ENABLE);
+    // Still until its first movement packet. The self-test set 100/s.
+    last_move = k_uptime_get_32() - SLOW_IDLE_MS;
+    uint8_t rate = rate_wanted();
+
+    if (rate != 100 && (command(PS2_SET_RATE) || command(rate))) {
+        LOG_WRN("Failed to set %d reports/s", rate);
+        rate = 100;
+    }
+    note_rate(rate);
+
+    err = stream_set(true);
     if (err) {
         LOG_ERR("Failed to turn streaming on (%d), powering the stick off", err);
         rethink_tp_power_off();
@@ -458,11 +647,14 @@ static int start_locked(void) {
 
     pkt_len = 0;
     pointing = true;
+    note_use();
     LOG_INF("Pointing");
     return 0;
 }
 
 int rethink_tp_start(void) {
+    atomic_clear(&idle_off);
+
     k_mutex_lock(&start_lock, K_FOREVER);
     int err = start_locked();
     k_mutex_unlock(&start_lock);
@@ -470,19 +662,351 @@ int rethink_tp_start(void) {
     return err;
 }
 
-// Starts the stick after boot (the adapter is up by then), then reports packets
-static void tp_thread(void *p1, void *p2, void *p3) {
+void rethink_tp_resume(void) {
+    k_mutex_lock(&start_lock, K_FOREVER);
+    if (powered && !pointing) {
+        rethink_tp_flush();
+        pkt_len = 0;
+        pkt_broken = false;
+        pointing = true;
+        note_use();
+    }
+    k_mutex_unlock(&start_lock);
+}
+
+// Streaming off, so replies don't mix with packets; packet bytes already on
+// their way are dropped with the acknowledge
+static int pause_streaming(void) {
+    rethink_tp_set_raw();
+    int err = rethink_tp_write(PS2_DISABLE);
+
+    k_sleep(REPLY_TIMEOUT);
+    rethink_tp_flush();
+    return err;
+}
+
+int rethink_tp_recalibrate(void) {
+    int err = -ENODEV;
+
+    k_mutex_lock(&start_lock, K_FOREVER);
+    if (pointing) {
+        err = pause_streaming();
+        if (!err) {
+            err = command(TP_COMMAND);
+        }
+        int64_t sent = k_uptime_get();
+        int32_t ack_ms = 0;
+
+        if (!err) {
+            err = command_wait(TP_RECALIBRATE, RECALIBRATE_TIMEOUT);
+            ack_ms = k_uptime_get() - sent;
+            // Nothing may be sent during the cycle, should the stick acknowledge early
+            k_sleep(K_MSEC(MAX(RECALIBRATE_MS - ack_ms, 0)));
+        }
+        if (err) {
+            LOG_WRN("Recalibration failed (%d)", err);
+        } else {
+            LOG_INF("Recalibrated (acknowledged after %d ms): the present forces are the zero "
+                    "point",
+                    ack_ms);
+        }
+
+        if (stream_set(true) == 0) {
+            pkt_len = 0;
+            pointing = true;
+        } else {
+            LOG_WRN("Streaming didn't resume, restarting the stick");
+            start_locked();
+        }
+    } else {
+        LOG_INF("Not recalibrated: the stick is off");
+    }
+    k_mutex_unlock(&start_lock);
+
+    return err;
+}
+
+int rethink_tp_set_rate(int rate) {
+    bool valid = false;
+
+    for (size_t i = 0; i < ARRAY_SIZE(rates); i++) {
+        valid |= rates[i] == rate;
+    }
+    if (!valid) {
+        return -EINVAL;
+    }
+
+    atomic_set(&rate_set, rate);
+    LOG_INF("%d reports/s%s", rate, slow_idle() ? ", 80 while still" : "");
+    post_request(REQ_RATE);
+    return 0;
+}
+
+void rethink_tp_rate_get(int *set, int *now) {
+    *set = atomic_get(&rate_set);
+    *now = pointing ? rate_now : 0;
+}
+
+// One step along rates[], stopping at either end
+static int rate_step(int step) {
+    int rate = atomic_get(&rate_set);
+
+    for (int i = 0; i < (int)ARRAY_SIZE(rates); i++) {
+        if (rates[i] == rate) {
+            return rethink_tp_set_rate(rates[CLAMP(i + step, 0, (int)ARRAY_SIZE(rates) - 1)]);
+        }
+    }
+    return -EINVAL;
+}
+
+int rethink_tp_request(uint32_t cmd) {
+    switch (cmd) {
+    case TP_TOG:
+        cmd = pointing ? TP_OFF : TP_ON;
+        break;
+    case TP_RATE_UP:
+        return rate_step(1);
+    case TP_RATE_DN:
+        return rate_step(-1);
+    case TP_OFF:
+    case TP_ON:
+    case TP_RECAL:
+    case REQ_WAKE:
+        break;
+    default:
+        return -EINVAL;
+    }
+
+    post_request(cmd);
+    return 0;
+}
+
+// Packets assembled so far, in order
+static void report_queued(void) {
     uint8_t p[3];
+
+    while (k_msgq_get(&packet_queue, p, K_NO_WAIT) == 0) {
+        if (pointing) {
+            report(p);
+            note_use();
+        }
+    }
+}
+
+// 0xFE, which the stick doesn't acknowledge: it sends its last packet again
+static bool resend_once(void) {
+    uint8_t p[3];
+
+    if (rethink_tp_write(PS2_RESEND) || read_reply(p, 1, REPLY_TIMEOUT)) {
+        return false;
+    }
+    // 0xFE back: our byte arrived broken
+    if (p[0] == PS2_RESEND || !(p[0] & PKT_ALWAYS_1) || read_reply(&p[1], 2, REPLY_TIMEOUT)) {
+        rethink_tp_flush();
+        return false;
+    }
+
+    report(p);
+    note_use();
+    return true;
+}
+
+// Until the clock has been quiet for PACKET_END_US: the packet on its way
+// is complete
+static void wait_packet_end(void) {
+    while (k_cyc_to_us_floor32(k_cycle_get_32() - rx_last) < PACKET_END_US) {
+        k_sleep(K_USEC(PACKET_END_US / 4));
+    }
+}
+
+// A packet with an error is asked for again before the stick's next one
+// (TrackPoint specification 2.4.2). Otherwise a lost packet could take a
+// button change with it.
+static void resend_locked(void) {
+    // The packets before it go out first
+    report_queued();
+
+    wait_packet_end();
+    if (!pkt_broken) {
+        // The next packet came first: asking now would bring that one again
+        stats.lost++;
+        return;
+    }
+
+    commanding = true;
+    rethink_tp_flush();
+
+    bool resent = false;
+
+    for (int attempt = 0; attempt < RESEND_ATTEMPTS && !resent; attempt++) {
+        resent = resend_once();
+    }
+    if (resent) {
+        stats.resent++;
+    } else {
+        stats.lost++;
+    }
+
+    pkt_len = 0;
+    pkt_broken = false;
+    commanding = false;
+}
+
+static void resend_packet(void) {
+    k_mutex_lock(&start_lock, K_FOREVER);
+    if (pointing) {
+        resend_locked();
+    }
+    k_mutex_unlock(&start_lock);
+}
+
+
+// A new report rate while pointing, with streaming off around it
+// (specification 2.7): about 10 ms without packets. A failure restarts the
+// stick.
+static void rate_change_locked(uint8_t rate) {
+    wait_packet_end();
+    commanding = true;
+    report_queued();
+    rethink_tp_flush();
+
+    int err = stream_set(false);
+
+    if (!err) {
+        err = command(PS2_SET_RATE);
+    }
+    if (!err) {
+        err = command(rate);
+    }
+    if (!err) {
+        err = stream_set(true);
+    }
+
+    pkt_len = 0;
+    pkt_broken = false;
+    commanding = false;
+
+    if (err) {
+        LOG_WRN("Failed to change to %d reports/s (%d), restarting the stick", rate, err);
+        start_locked();
+        return;
+    }
+    note_rate(rate);
+    stats.rate_changes++;
+    LOG_DBG("%d reports/s", rate);
+}
+
+static void rate_update(void) {
+    if (!pointing || rate_wanted() == rate_now) {
+        return;
+    }
+
+    k_mutex_lock(&start_lock, K_FOREVER);
+    uint8_t rate = rate_wanted();
+
+    if (pointing && rate != rate_now) {
+        rate_change_locked(rate);
+    }
+    k_mutex_unlock(&start_lock);
+}
+
+static void carry_out(atomic_val_t req) {
+    if (req & BIT(REQ_RESEND)) {
+        resend_packet();
+    }
+    if (req & BIT(TP_OFF)) {
+        rethink_tp_power_off();
+    }
+    // A wake-up only if no key switched the stick off in the meantime
+    if ((req & BIT(TP_ON)) || ((req & BIT(REQ_WAKE)) && atomic_get(&idle_off))) {
+        if (!pointing) {
+            rethink_tp_start();
+        }
+    }
+    if (req & BIT(TP_RECAL)) {
+        rethink_tp_recalibrate();
+    }
+}
+
+// Milliseconds until the idle power-off is due (0: now), -1 for none
+static int32_t idle_left_ms(void) {
+    if (IDLE_OFF_MS == 0 || !pointing) {
+        return -1;
+    }
+
+    int32_t unused = k_uptime_get_32() - (uint32_t)atomic_get(&last_use);
+
+    return MAX(IDLE_OFF_MS - unused, 0);
+}
+
+// Milliseconds until the rate drops for the stick being still, -1 for never
+static int32_t slow_left_ms(void) {
+    if (!pointing || !slow_idle() || rate_now == IDLE_RATE) {
+        return -1;
+    }
+
+    return MAX(SLOW_IDLE_MS - (int32_t)still_ms(), 0);
+}
+
+static k_timeout_t next_timeout(void) {
+    int32_t idle = idle_left_ms();
+    int32_t slow = slow_left_ms();
+    int32_t ms = idle < 0 ? slow : slow < 0 ? idle : MIN(idle, slow);
+
+    return ms < 0 ? K_FOREVER : K_MSEC(ms);
+}
+
+// Starts the stick after boot (the adapter is up by then), then reports
+// packets, carries out requests, sets the rate for moving or still and
+// powers the stick off when unused
+static void tp_thread(void *p1, void *p2, void *p3) {
+    struct k_poll_event events[] = {
+        K_POLL_EVENT_INITIALIZER(K_POLL_TYPE_SIGNAL, K_POLL_MODE_NOTIFY_ONLY, &request_signal),
+        K_POLL_EVENT_INITIALIZER(K_POLL_TYPE_MSGQ_DATA_AVAILABLE, K_POLL_MODE_NOTIFY_ONLY,
+                                 &packet_queue),
+    };
 
     rethink_tp_start();
 
     for (;;) {
-        k_msgq_get(&packet_queue, p, K_FOREVER);
-        if (pointing) {
-            report(p);
+        k_poll(events, ARRAY_SIZE(events), next_timeout());
+
+        if (events[0].state == K_POLL_STATE_SIGNALED) {
+            k_poll_signal_reset(&request_signal);
+            carry_out(atomic_clear(&requests));
+        }
+        events[0].state = K_POLL_STATE_NOT_READY;
+        events[1].state = K_POLL_STATE_NOT_READY;
+
+        report_queued();
+        rate_update();
+
+        if (idle_left_ms() == 0) {
+            LOG_INF("Unused for %d min: pointing stick off until a key is pressed",
+                    CONFIG_RETHINK_TRACKPOINT_IDLE_OFF_MIN);
+            rethink_tp_power_off();
+            atomic_set(&idle_off, 1);
         }
     }
 }
+
+#if IDLE_OFF_MS > 0
+// Key presses count as use, and wake a stick powered off for lack of it
+static int key_listener(const zmk_event_t *eh) {
+    const struct zmk_position_state_changed *ev = as_zmk_position_state_changed(eh);
+
+    if (ev && ev->state) {
+        note_use();
+        if (atomic_get(&idle_off)) {
+            rethink_tp_request(REQ_WAKE);
+        }
+    }
+    return ZMK_EV_EVENT_BUBBLE;
+}
+
+ZMK_LISTENER(rethink_trackpoint, key_listener);
+ZMK_SUBSCRIPTION(rethink_trackpoint, zmk_position_state_changed);
+#endif
 
 K_THREAD_DEFINE(rethink_tp_thread, CONFIG_RETHINK_TRACKPOINT_THREAD_STACK_SIZE, tp_thread, NULL,
                 NULL, NULL, CONFIG_RETHINK_TRACKPOINT_THREAD_PRIORITY, 0, 0);

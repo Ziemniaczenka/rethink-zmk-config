@@ -10,7 +10,11 @@
  * show where a standard key code exists: Break, SysRq, lock (Win+L), sleep,
  * display (Win+P), Scroll Lock, Num Lock, Pause, PrtSc, brightness, browser
  * back/forward on PgUp/PgDn, media on the arrows. Battery, wireless,
- * camera, pointing device, hibernate and zoom have none and are left out.
+ * camera, hibernate and zoom have none and are left out.
+ *
+ * Fn+F8 (pointing device) switches the TrackPoint on and off; Ctrl+Fn+F8
+ * recalibrates it, with the hands off the stick. Report rate keys
+ * (Shift+Fn+F8 up, Ctrl+Shift+Fn+F8 down) are commented out below.
  *
  * Fn+F10 (NmLk) toggles the embedded keypad: the digits on 7-9, U-O, J-L
  * and M, / * - + on 0, P, ; and /. It sends digits and keypad operators,
@@ -19,11 +23,37 @@
 
 #include <behaviors.dtsi>
 #include <dt-bindings/zmk/keys.h>
+#include <dt-bindings/rethink/trackpoint.h>
 
 #define NUM 1
 #define FN 2
 
 / {
+    behaviors {
+        // Fn+F8: TrackPoint on/off, with Ctrl: recalibrate
+        tp_f8: tp_f8 {
+            compatible = "zmk,behavior-mod-morph";
+            #binding-cells = <0>;
+            bindings = <&tp TP_TOG>, <&tp TP_RECAL>;
+            mods = <(MOD_LCTL|MOD_RCTL)>;
+        };
+        // Report rate keys: &tp_f8_rate instead of &tp_f8 on Fn+F8 adds
+        // Shift: rate up a step (10, 20, 40, 60, 80, 100, 200 a second),
+        // Ctrl+Shift: down, until the next reset
+        // tp_f8_rate: tp_f8_rate {
+        //     compatible = "zmk,behavior-mod-morph";
+        //     #binding-cells = <0>;
+        //     bindings = <&tp_f8>, <&tp_rate>;
+        //     mods = <(MOD_LSFT|MOD_RSFT)>;
+        // };
+        // tp_rate: tp_rate {
+        //     compatible = "zmk,behavior-mod-morph";
+        //     #binding-cells = <0>;
+        //     bindings = <&tp TP_RATE_UP>, <&tp TP_RATE_DN>;
+        //     mods = <(MOD_LCTL|MOD_RCTL)>;
+        // };
+    };
+
     keymap {
         compatible = "zmk,keymap";
 
@@ -71,7 +101,7 @@
             display-name = "Fn";
             bindings = <
                 // Esc                  F1             F2         F3      F4           F5      F6      F7         F8      F9        F10       F11              F12     Insert     Delete        Home          End
-                   &kp LC(PAUSE_BREAK)  &kp LA(PSCRN)  &kp LG(L)  &trans  &kp C_SLEEP  &trans  &trans  &kp LG(P)  &trans  &kp SLCK  &tog NUM  &kp PAUSE_BREAK  &trans  &kp PSCRN  &kp C_BRI_DN  &kp C_BRI_UP  &trans
+                   &kp LC(PAUSE_BREAK)  &kp LA(PSCRN)  &kp LG(L)  &trans  &kp C_SLEEP  &trans  &trans  &kp LG(P)  &tp_f8  &kp SLCK  &tog NUM  &kp PAUSE_BREAK  &trans  &kp PSCRN  &kp C_BRI_DN  &kp C_BRI_UP  &trans
                 // `       1       2       3       4       5       6       7       8       9       0       -       =       Bksp
                    &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans
                 // Tab     Q       W       E       R       T       Y       U       I       O       P       [       ]       Enter

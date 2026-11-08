@@ -18,15 +18,31 @@ ZMK firmware for the [ReThink Keyboard](https://github.com/Ziemniaczenka/ReThink
 
 Next, in this order:
 
-- [ ] Shield `rethink_t420` (Mezzanine): keymap from the scan, buttons above the keyboard, Fn layer per the keycaps, Caps Lock LED. Built, not yet tested on the keyboard
+- [x] Shield `rethink_t420` (Mezzanine): keymap from the scan, buttons above the keyboard, Fn layer per the keycaps, Caps Lock LED
 - [ ] TrackPoint, TP1 on the T420 and L420 (see [Pointing stick](#pointing-stick-in-progress)):
   - [x] Power, reset and the bit-banged PS/2 link, `tp` shell commands. Tested on the T420: ID 01/0e, 14.7 kHz, no bit errors on USB, one byte in ~1500 broken off with Bluetooth
-  - [x] Pointing: start at boot (self-test, ID, streaming on), packets to ZMK's pointing input over USB and Bluetooth, the stick's buttons. Built, not yet tested
-  - [ ] Mouse buttons on keys for the T420 (its buttons are on the palmrest), e.g. on a layer while the stick moves
-  - [ ] If Bluetooth costs more packets than it does now: receive through UARTE20 instead (a PS/2 byte is UART 8O1 at the stick's clock rate) and keep bit-banging for sending
-  - [ ] Power: the stick off after inactivity and on with the next key, its current measured
-  - [ ] Settings: sensitivity, press-to-select, scrolling with the middle button
+  - [x] Pointing: start at boot (self-test, ID, streaming on), packets to ZMK's pointing input. Tested on the T420: movement and its three buttons over USB and Bluetooth
+  - [x] Reliable reception. With pointing in the shell build (debug logs over USB), wired: 2505 bytes without an error; over Bluetooth: 107 errors in 913 bytes (46 framing, 3 parity, 58 broken off; earlier 4 % in 4444). An interrupt delayed by more than one clock period (68 µs) misses a bit, and the Bluetooth controller's upper layer shared the GPIO interrupt's priority 1. With GPIOTE20 at priority 0 (`rethink_trackpoint.dtsi`): wired 13466 bytes without an error, Bluetooth 12 errors in 2673 bytes (0.45 %: 1 framing, 10 parity, 1 broken off), so now mostly a bit read late rather than an edge missed. A packet with an error is now asked for again (`fe`, TrackPoint specification 2.4.2), so a lost packet doesn't take a button change with it; `tp stat` counts them as sent again or lost. Tested over Bluetooth: 12 errors in 3729 bytes, 11 packets sent again, none lost. A command's reply lost the same way is asked for again too. If errors grow, receive through UARTE20 instead, where the hardware samples the bits: a PS/2 byte is UART 8O1 at the stick's clock (14.4 kBd is within 2 % of this stick's 14.7 kHz; the nRF54L has odd parity). Sending stays bit-banged: rare, and the stick clocks it. Also drop packets with the overflow bits set
+  - [ ] Keys: Fn+F8 on/off, Ctrl+Fn+F8 recalibrate (`&tp`). Tested on the T420: off at once, on in 0.87 s; recalibrating does nothing while the stick is off. Report rate up and down on Shift+Fn+F8 and Ctrl+Shift+Fn+F8: tested, commented out in the keymaps. Untested: off after 10 minutes unused
+  - [ ] Scrolling: middle button held while the stick moves sends the wheel instead of movement, vertical, and horizontal only past a large dead zone. A middle click only if the button comes up without movement
+  - [ ] Sensitivity and smoothing: the stick's own settings (sensitivity, negative inertia, plateau speed, drift time, press-to-select; see the table in [Pointing stick](#pointing-stick-in-progress)), written after each start since a power cycle clears them, and ZMK input processors (scaling); kept in settings, changed with keys (later ZMK Studio)
+  - [ ] Power, see below
   - TP2 (FFC2) comes with `rethink_t480`
+- [ ] Pointing stick power. The stick path: the stick at 5 V, the charge pump doubling from 3.3 V (input current about twice the output), R14 and the PCA9306. The TrackPoint specification: the controller should average under 6 mA (25 mA peak); the sensor bridge is at least 350 Ω (up to 14.3 mA at 5 V) and is powered for each conversion (an op-amp power-up delay starts each one); the stick converts 80-120 times a second whatever the report rate, and sends packets only when something changes. Measured on a T420 over Bluetooth, on battery (shell build, USB unplugged), the stick still:
+
+  | Stick | Battery current | Stick path |
+  | --- | --- | --- |
+  | Off (Fn+F8 or `tp off`) | 1.56 mA | |
+  | On, 100 reports/s | 20.6 mA | 19 mA |
+  | 80 reports/s (`f3 50`) | 19.1 mA | 17.5 mA |
+  | Sampling off (`e2 47 20 10`) | 13.8 mA | 12.2 mA |
+  | Powered down (`e2 44`) | 5.8 mA | 4.2 mA |
+
+  Earlier: 23.6 mA while it moves, 21.5 mA while typing. So the force measurement costs about 7 mA of the 19 (1.5 mA of it saved at 80/s), the stick's controller awake about 8 mA, and pump, R14, shifter and the stick asleep about 4 mA; the Caps Lock LED adds 1.9 mA (3.5 mA with the stick off). Report rates, battery current with the stick still: 10/s 20.3 mA, 20/s 20.3, 40/s 19.1, 60/s 21.7, 80/s 19.1, 100/s 20.5, 200/s 20.5 (its packets still 10 ms apart). So 80/s is the cheapest, and 10-20/s cost more despite the specification's 80 measurements a second. Done: 80 reports/s, off after 10 minutes unused, Fn+F8 by hand, rate keys. Experimental, off: 80/s while still and the set rate from the first movement packet (`CONFIG_RETHINK_TRACKPOINT_SLOW_IDLE`; tested at 100/s: back to 19.1 mA 2 s after the stick stops). 100/s felt better to point with than 80/s; 80/s kept for the 1.4 mA. Left:
+  - Sampling off while still: 14.1 mA with streaming on (5 mA less than 80/s). The buttons still report, but the stick doesn't notice a touch, so something else has to switch sampling on again within milliseconds. Maybe: sampling on for a moment every 100 ms or so to look for a touch, if the stick keeps its zero point through it. It survives `ff` (`tp on`)
+  - `e2 44` powers down only the stick; switching the whole path off (1.56 mA) is better for the idle state
+  - Running the stick at 3.3 V (JP6, JP4, JP5 to 2-3: no pump, no level shifter; `CONFIG_RETHINK_TP1_SUPPLY_3V3`): the specification asks for 5 V ± 10 %, so not for the T420 stick; for 3.3 V sticks (T480 class, TP2)
+  - R14 (10 kΩ to the stick's 5 V) carries 0.5 mA while the reset is driven low, about 1 mA from the battery through the pump: a larger value (e.g. 100 kΩ) on the next adapter revision; there a 5 V boost converter (about 90 % efficient) instead of the charge pump (5 V from 6.6 V doubled, 76 %) would save about 15 % of the stick's share
 - [ ] Battery: fuel gauge model of the real cell (the "Example" model reads 50 % at 4155 mV), charge-current reading (fuel gauge +525 mA, meter 440 mA), discharge limit (200 mA, 1 A with the backlight), USB 1.5 A, low-battery cutoff
 - [ ] Idle current on Bluetooth. Measured on battery with a multimeter:
 
@@ -37,6 +53,7 @@ Next, in this order:
   | `rethink_bare_tester`, bare Control Board | 1.6 mA | 1.7 mA |
   | System OFF (wired mode, no USB) | 6-8 µA | |
   | A key held (1 kHz scan with I2C, before the column skip above) | +1.2 mA | |
+  | Caps Lock LED on (`rethink_t420`) | +1.9 mA | |
 
   So a floor of about 1.5 mA comes from the Control Board and firmware, not the adapter or the matrix, and the radio adds little. In the USB log no connection-parameter update followed in 4 minutes (ZMK logs `interval N latency N` on one), so the host kept its own parameters. A tuned ZMK keyboard idles at tens to a few hundred µA, so about 1 mA is to be found. Next: a trace with a power profiler. Predictions, by what the trace would show:
   - **Flat floor between radio events:** something stays on. Candidates: the USB controller and its regulator (`vregusb`, enabled in the board DT) without VBUS, the 32 MHz crystal held by a driver, or the CPU not sleeping. Check: a plain Zephyr BLE sample (`peripheral_hids`) on the same board. At ~1.5 mA too, it's the board or Zephyr; lower, it's ZMK or these modules.
@@ -47,6 +64,7 @@ Next, in this order:
 - [ ] Backlight on a real keyboard (`rethink_t430`): current on BUCK1 (50 mA works, ~106 mA doesn't), `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY` (capped at 10 % until then), PWM frequency
 - [ ] Control Board LEDs: the blue LED sometimes misbehaves (`CONFIG_RETHINK_CONNECTED_LED`, to be described); PWM brightness control (RGB especially); RGB as charging indicator; battery level, charging and backlight-level animations on the white LEDs
 - [ ] Shields: `rethink_t480`, `rethink_l14`
+- [ ] Bluetooth: the T420 build doesn't pair with a Samsung TV (Windows and Android pair fine). Not looked into: the TV, ZMK, or the mouse in the HID descriptor since pointing
 - [ ] Self-test after programming, for user-built boards: check the adapter (I2C) and other parts at boot and report a fault without a serial log, e.g. a sequence of red blinks
 - [ ] ZMK Studio: change the keymap at runtime without rebuilding (swap Fn and LCtrl, Fn-layer and unused keys) and pick ISO or ANSI, which Studio offers when a shield defines both physical layouts. Needs key positions in each physical layout, an ANSI transform per keyboard, a `&studio_unlock` key (ThinkVantage on the T420), spare layers, and Studio over USB (a CDC ACM port on the device_next stack, which the log and shell snippets use now) and Bluetooth
 
@@ -58,11 +76,11 @@ All pinned by commit in [config/west.yml](config/west.yml):
 | --- | --- | --- |
 | ZMK | [zmkfirmware/zmk#3387](https://github.com/zmkfirmware/zmk/pull/3387) (`petejohanson/zmk`) | Draft port of ZMK to Zephyr 4.4; matrix scanning uses Zephyr's input API |
 | Zephyr | [FrameworkComputer/zephyr#2](https://github.com/FrameworkComputer/zephyr/pull/2) | Zephyr 4.5 with the `framework_wireless_tp_kb` board |
-| framework-cb | [Ziemniaczenka/zmk-config-fw-cb](https://github.com/Ziemniaczenka/zmk-config-fw-cb), fork of [Shaedil/zmk-config-fw-cb](https://github.com/Shaedil/zmk-config-fw-cb) | ZMK board variant `framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk`: USB HID on Zephyr's `device_next` stack, USB/Bluetooth mode switch, charger, fuel gauge, watchdog, MCUboot signing, and the patches that let ZMK #3387 build on Zephyr 4.5 |
+| framework-cb | [Ziemniaczenka/zmk-config-fw-cb](https://github.com/Ziemniaczenka/zmk-config-fw-cb), fork of [Shaedil/zmk-config-fw-cb](https://github.com/Shaedil/zmk-config-fw-cb) | ZMK board variant `framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk`: USB HID on y07uyy stack, USB/Bluetooth mode switch, charger, y07uyyMCUboot signing, and the patches that let y07uyyphyr 4.5 |
 
-The patches from framework-cb (its README says what each one does) and from `patches/` here, if any, are applied to the ZMK and Zephyr checkouts at build time. Nothing is edited by hand.
+The patches from y07uyyME says what each one does) and from `patchesy07uyypplied to the ZMK and Zephyr checkouts y07uyy is edited by hand.
 
-## Requirements (Windows)
+## Requirements (y07uyy
 
 - Docker Desktop
 - For flashing over USB: `mcumgr`, installed with [Go](https://go.dev/dl/):
@@ -272,12 +290,13 @@ ThinkPad L420 keyboard on FFC1 (30-pin matrix cable in J4). Mapped with `rethink
   | --- | --- |
   | Esc, F1 | Break, SysRq (Alt+PrtSc) |
   | F2, F4, F7 | Lock (Win+L), sleep, display (Win+P) |
+  | F8 | TrackPoint on/off; with Ctrl: recalibrate it (hands off the stick) |
   | F9, F10, F11 | Scroll Lock, NmLk (embedded keypad on/off), Pause |
   | Insert, Delete, Home | PrtSc, brightness down, brightness up |
   | PgUp, PgDn | Browser back, forward |
   | Up, Down, Left, Right | Stop, play/pause, previous, next |
 
-  Battery (F3), wireless (F5), camera (F6), pointing device (F8), hibernate (F12) and zoom (Space) have no standard key code. The embedded keypad sends the digits on 7-9, U-O, J-L and M, and `/ * - +` on 0, P, `;` and `/` (UK ISO legends), independent of the host's Num Lock.
+  Battery (F3), wireless (F5), camera (F6), hibernate (F12) and zoom (Space) have no standard key code. The embedded keypad sends the digits on 7-9, U-O, J-L and M, and `/ * - +` on 0, P, `;` and `/` (UK ISO legends), independent of the host's Num Lock.
 - **Not on this keyboard:** backlight (BUCK1 stays off from boot) and status LEDs; the expander's LED pins rest on their pull-ups.
 - **TrackPoint** (8-pin cable in J5; its buttons go to the stick, not the matrix): a mouse, see [Pointing stick](#pointing-stick-in-progress).
 - **Name:** "ReThink L420".
@@ -297,10 +316,11 @@ ThinkPad T420 keyboard on the Mezzanine connector (2x20 pins). Mapped with `reth
   | --- | --- |
   | PrtSc, ScrLk, Pause | SysRq (Alt+PrtSc), NmLk (embedded keypad on/off), Break |
   | F2, F4, F7 | Lock (Win+L), sleep, display (Win+P) |
+  | F8 | TrackPoint on/off; with Ctrl: recalibrate it (hands off the stick) |
   | Home, End | Brightness up, down |
   | Up, Down, Left, Right | Stop, play/pause, previous, next |
 
-  Battery (F3), wireless (F5), camera (F6), pointing device (F8), hibernate (F12), ThinkLight (PgUp) and zoom (Space) have no standard key code. The embedded keypad is the same as on `rethink_l420`.
+  Battery (F3), wireless (F5), camera (F6), hibernate (F12), ThinkLight (PgUp) and zoom (Space) have no standard key code. The embedded keypad is the same as on `rethink_l420`.
 - **Caps Lock LED** (Mezzanine 21) follows the host. The power, mute and mic mute LEDs rest on their pull-ups.
 - **Not on this keyboard:** backlight. KBDID0-2 (Mezzanine 25, 27, 29) meet the adapter's backlight PWM, GND and BL_5V, so keep JP3 open; P1.17 stays unused.
 - **TrackPoint** (Mezzanine 37-40): a mouse, see [Pointing stick](#pointing-stick-in-progress).
@@ -308,27 +328,50 @@ ThinkPad T420 keyboard on the Mezzanine connector (2x20 pins). Mapped with `reth
 
 ### Pointing stick (in progress)
 
-`rethink_trackpoint.dtsi` adds the TP1 stick (Mezzanine 37-40, FFC1 J5) to a keyboard shield; `rethink_t420` and `rethink_l420` include it. The driver (`rethink,trackpoint`, `src/trackpoint.c`) starts the stick after boot and reports it to ZMK as a mouse (`CONFIG_ZMK_POINTING`, on for shields with the stick), over USB and Bluetooth. Without an answer from a stick (none connected) it powers it off again. Wired power-off switches it off before System OFF. Sensitivity and the stick's own power saving come later; it stays powered while the keyboard runs.
+`rethink_trackpoint.dtsi` adds the TP1 stick (Mezzanine 37-40, FFC1 J5) to a keyboard shield; `rethink_t420` and `rethink_l420` include it. The driver (`rethink,trackpoint`, `src/trackpoint.c`) starts the stick after boot and reports it to ZMK as a mouse (`CONFIG_ZMK_POINTING`, on for shields with the stick), over USB and Bluetooth. Without an answer from a stick (none connected) it powers it off again. Wired power-off switches it off before System OFF.
 
 - **Power:** TP_3V3 (P3.12), then the charge pump for a 5 V stick (`CONFIG_RETHINK_TP1_SUPPLY_5V`, JP6 1-2), all with the reset held. The reset (TP1_RST, active high, R14 pull-up to the stick's supply) is released 600 ms later, the power-on reset time of the TrackPoint specification.
-- **PS/2 link:** FW_CLK (P1.16) and FW_DAT (P1.15), through the PCA9306 for a 5 V stick. The stick clocks every bit (a T420 stick at about 14.7 kHz); an interrupt on each falling clock edge reads DATA or sets the next bit.
-- **Start:** self-test result `aa 00`, TrackPoint ID (`e1`, logged), streaming on (`f4`).
-- **Pointing:** 3-byte packets every 10 ms while the stick moves, assembled in the interrupt. A pause, or a byte lost to an error, starts the next packet afresh. Movement goes out as relative X/Y, the packet's left, right and middle buttons as mouse buttons 1-3. A T420 keyboard has no buttons of its own (they are on the palmrest); pressing the stick down clicks if its press-to-select is on.
+- **PS/2 link:** FW_CLK (P1.16) and FW_DAT (P1.15), through the PCA9306 for a 5 V stick. The stick clocks every bit (a T420 stick at about 14.7 kHz); an interrupt on each falling clock edge reads DATA or sets the next bit. The interrupt (GPIOTE20) runs at priority 0, beside the Bluetooth controller's lower layer, since at priority 1 the controller's upper layer delayed it by more than a clock period. A packet with a broken byte (framing, parity, or unfinished 1.2 ms after its start) is dropped, and the thread asks the stick to send it again (`fe`) before its next packet; so is a command's reply that doesn't come in time.
+- **Start:** self-test result `aa 00`, TrackPoint ID (`e1`, logged), the report rate (`f3`), streaming on (`f4`).
+- **Pointing:** 3-byte packets every 10 ms while the stick moves, assembled in the interrupt. A pause, or a byte lost to an error, starts the next packet afresh. Movement goes out as relative X/Y, the packet's left, right and middle buttons as mouse buttons 1-3. The buttons are wired to the stick: the T420's under the space bar, the L420's through J5. Press-to-select (clicking by pressing the stick) is off on the T420 stick.
+- **Report rate:** 80/s (`CONFIG_RETHINK_TRACKPOINT_SAMPLE_RATE`), the cheapest measured (roadmap: Pointing stick power). The stick measures its force 80 times a second at 10-40 and 80/s, 120 at 60/s, 100 at 100 and 200/s (TrackPoint specification 2.4.6); at 200/s the T420 stick's packets still came 10 ms apart. Experimental (`CONFIG_RETHINK_TRACKPOINT_SLOW_IDLE`, off): after 2 s without movement the stick reports at 80/s until its next movement packet, which brings the set rate back: streaming off, `f3`, streaming on, about 10 ms without packets; for 60, 100 and 200/s. `tp stat` counts the changes.
+- **Keys:** `&tp TP_TOG` switches the stick on and off (`TP_ON`, `TP_OFF`), `&tp TP_RECAL` recalibrates it, `&tp TP_RATE_UP` and `TP_RATE_DN` step the report rate through 10, 20, 40, 60, 80, 100 and 200/s until the next reset (`dt-bindings/rethink/trackpoint.h`). Both keyboards have on/off and recalibrate on Fn+F8 and Ctrl+Fn+F8; the rate keys (Shift+Fn+F8, Ctrl+Shift+Fn+F8) are commented out in their keymaps. The stick's thread carries them out: starting takes about a second, recalibrating about 350 ms. The buttons go off with the stick.
+- **Unused:** after `CONFIG_RETHINK_TRACKPOINT_IDLE_OFF_MIN` (10) minutes with neither the stick nor a key used, the stick is powered off; the next key press starts it again. A stick switched off with Fn+F8 stays off until Fn+F8.
+- **Calibration** is the stick's own (TrackPoint specification, section 2.2.3): the self-test sets the zero point, so the stick must not be touched in the second after power-on. Drift correction then resets it whenever the force stays within ±0.8 g for about half a second (hands off; `e2 81 5f` sets the time in 107 ms steps, default 5). A wrong zero, from a finger on the stick at power-on, so corrects itself once the stick is let go. `e2 51` (Ctrl+Fn+F8) sets the zero point to the present forces at once. The specification has the stick acknowledge only after the recalibration (about 310 ms); the T420 stick acknowledged after 2 ms, so the driver waits 350 ms either way before the next command.
 - **Bluetooth:** the keyboard now also describes a mouse. If the pointer doesn't move over Bluetooth, remove the keyboard on the computer and pair it again.
 
 Build a keyboard with the shell, e.g. `.\build.ps1 -Shield rethink_t420 -Snippet rethink-usb-shell`:
 
 | Command | Does |
 | --- | --- |
-| `tp on` | Powers the stick (or resets it with `ff`) and starts pointing |
+| `tp on` | Powers the stick (or resets it with `ff`, or power cycles it if that gets no answer, as after `e2 44`) and starts pointing |
 | `tp off` | Powers it off |
 | `tp send <hex> [hex...]` | Sends bytes, showing each acknowledge (`fa`), then the reply. Pauses pointing and turns streaming off first (`f5`) |
-| `tp read [s]` | Shows what the stick sends, one line per packet (default 5 s). Pauses pointing like `send` |
-| `tp stat [clear]` | Bytes and errors both ways, packets reported, the stick's clock period |
+| `tp read [s]` | Shows what the stick sends, one line per packet with its time in ms (default 5 s). While pointing: the packets instead of reporting them, then pointing again |
+| `tp rate [n]` | Shows or sets the report rate (10, 20, 40, 60, 80, 100, 200), as the keys do |
+| `tp stat [clear]` | Bytes and errors both ways, packets reported, sent again and lost, the report rate and its changes, the stick's clock period |
 
 Bytes to try: `e1` asks for the TrackPoint ID (`fa`, then the maker: 01 IBM/Lenovo, 02 ALPS, 03 Elan, 04 NXP, and its firmware), `f2` the PS/2 device ID (`fa 00`), `ff` resets (`fa aa 00`), `f4` starts streaming (3-byte packets while the stick moves, see `tp read`), `f5` stops it.
 
-Measured on a T420 stick (ID 01, firmware 0e): no bit errors over USB; with Bluetooth connected, one byte in about 1500 broken off (an interrupt delayed by more than a clock period), which costs that one packet.
+The stick's own settings, from the [TrackPoint System Version 4.0 Engineering Specification](https://web.mit.edu/bbaren/Public/ykt3eext.pdf) (YKT3E; a T420 stick answers `e1` with 01 0e, the ID of that version). `e2 80 XX` reads a RAM location, `e2 81 XX YY` writes YY to it, `e2 47 XX MM` flips the bits MM of flag byte XX. The values survive `ff` but not a power cycle, so the driver will have to write them after each start.
+
+| Setting | Command | Default | Effect |
+| --- | --- | --- | --- |
+| Sensitivity | `e2 81 4a XX` | 80 (×1.0) | Force scale before the transfer function, ×0 to ×1.99 |
+| Negative inertia | `e2 81 4d XX` | 06 | Boosts changes of force, damps the start of a movement; 0 off |
+| Upper plateau speed | `e2 81 60 XX` | 61 | Speed under a firm push, about 22 + 4.3 × XX counts/s (439 at the default) |
+| Sample rate | `f3 XX` | 64 (100/s) | Reports per second: 0a, 14, 28, 3c, 50, 64, c8 (10-200); force measured 80/s at 10-40 and 80, 120/s at 60, 100/s at 100 and 200. See Report rate above |
+| Drift time | `e2 81 5f XX` | 05 | Hands-off time before drift correction, in 107 ms steps |
+| Drift correction off | `e2 47 23 80` | on | |
+| Press-to-select | `e2 47 2c 01` | off | Clicks by pressing the stick; thresholds and timing at `5c`, `5a`, `5e`, `5d`, `57`, `58`, `59` |
+| Middle button blocked | `e2 47 23 01` | no | |
+| Axes | `e2 81 2c XX` | 00 | Bits 3-6: invert X, Y, Z, swap X and Y |
+| Sampling off | `e2 47 20 10` | on | No force conversions, no movement; the buttons still report. 5 mA less from the battery than 80/s on the T420 |
+| Recalibrate | `e2 51` | | Zero point to the present forces; acknowledged after about 310 ms (the T420 stick: 2 ms) |
+| Power down | `e2 44` | | Until a hardware reset |
+| Others | `e2 46`, `e2 25`, `e2 7f` | | ROM version, self-test result bits, power-on reset |
+
+Measured on a T420 stick (ID 01, firmware 0e), pointing in the shell build: over USB 2505 bytes without an error, over Bluetooth 107 errors in 913 bytes (46 framing, 3 parity, 58 broken off). So the Bluetooth controller delayed the interrupt. At priority 0: 12 errors in 2673 bytes over Bluetooth, none in 13466 over USB. With packets asked for again: 12 errors in 3729 bytes, 11 packets sent again, none lost. The stick costs about 17.5 mA while on at 80/s (roadmap: Pointing stick power).
 
 ## Repository layout
 
@@ -346,10 +389,13 @@ Measured on a T420 stick (ID 01, firmware 0e): no bit errors over USB; with Blue
 ├── CMakeLists.txt, Kconfig      Module sources and options (CONFIG_RETHINK_*)
 ├── src/                         Pairing button, profile and blue LEDs, adapter control, expander
 │                                registers, matrix, bring-up commands, backlight,
-│                                pointing stick, wired power-off
+│                                pointing stick and its key behavior, wired power-off
 ├── include/rethink/             Public API (adapter.h, expander.h, backlight.h, trackpoint.h)
+├── include/dt-bindings/rethink/ Keymap constants (trackpoint.h: TP_OFF, TP_ON, TP_TOG, TP_RECAL,
+│                                TP_RATE_UP, TP_RATE_DN)
 ├── dts/bindings/                rethink,adapter-ctrl, rethink,pcal6416a, rethink,matrix,
-│                                rethink,backlight and rethink,trackpoint
+│                                rethink,backlight, rethink,trackpoint and
+│                                rethink,behavior-trackpoint
 ├── boards/shields/              Shields; rethink_common/ holds the shared dtsi files
 │                                (Control Board, adapter, its matrix and full layout, pointing stick,
 │                                backlight, header matrix) and the shields' Kconfig defaults
@@ -377,6 +423,9 @@ Measured on a T420 stick (ID 01, firmware 0e): no bit errors over USB; with Blue
 | `CONFIG_RETHINK_MATRIX` | if `rethink,matrix` in DT | Matrix with expander columns, direct keys and ghost-key blocking |
 | `CONFIG_RETHINK_BACKLIGHT` | if `rethink,backlight` in DT | Backlight power chain, PWM and interlock (use with `CONFIG_ZMK_BACKLIGHT`) |
 | `CONFIG_RETHINK_TRACKPOINT` | if `rethink,trackpoint` in DT | Pointing stick power, reset, PS/2 link and pointing |
+| `CONFIG_RETHINK_TRACKPOINT_IDLE_OFF_MIN` | 10 | Minutes with neither the stick nor a key used before the stick is powered off; 0 = never |
+| `CONFIG_RETHINK_TRACKPOINT_SAMPLE_RATE` | 80 | Reports per second (10, 20, 40, 60, 80, 100, 200); keys and `tp rate` change it until the next reset |
+| `CONFIG_RETHINK_TRACKPOINT_SLOW_IDLE` | n | Experimental: 80 reports/s after 2 s without movement, the set rate from the next movement packet |
 | `CONFIG_RETHINK_TRACKPOINT_SHELL` | y with a shell | `tp` shell commands |
 
 Hardware options: see [Hardware options](#hardware-options).

@@ -1,0 +1,12 @@
+# Copyright (c) 2026 Ziemniaczenka
+# SPDX-License-Identifier: MIT
+
+description: |
+  Pointing stick (rethink,trackpoint) from a key: &tp TP_OFF, TP_ON, TP_TOG,
+  TP_RECAL, TP_RATE_UP or TP_RATE_DN, from dt-bindings/rethink/trackpoint.h.
+  The stick's thread carries the request out, so the key doesn't wait for
+  the stick.
+
+compatible: "rethink,behavior-trackpoint"
+
+include: one_param.yaml
