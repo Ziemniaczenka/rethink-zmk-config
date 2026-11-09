@@ -23,8 +23,8 @@
 // measurements) and powers the stick off after a while without use.
 //
 // With the middle button held, movement scrolls instead (vertical, or
-// sideways when that is clearly stronger); the middle button clicks only if
-// let go without movement.
+// sideways when that is clearly stronger; in sixteenths of a step with smooth
+// scrolling); the middle button clicks only if let go without movement.
 //
 // The stick calibrates itself: its zero point is set at the self-test, and
 // again whenever the force stays constant for 0.53 s (hands off: drift
@@ -181,13 +181,17 @@ static uint32_t last_move;
 static atomic_t scroll_divisor = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SCROLL_DIVISOR);
 static atomic_t scroll_dead_zone = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SCROLL_H_DEAD_ZONE);
 #endif
+// Wheel units per step: sixteenths with smooth scrolling, which the input
+// listener divides back into whole steps for a host that doesn't set the HID
+// Resolution Multiplier
+#define WHEEL_UNITS (IS_ENABLED(CONFIG_ZMK_POINTING_SMOOTH_SCROLLING) ? 16 : 1)
 // Counts while the middle button is held: more than this, and letting it go
 // doesn't click
 #define CLICK_SLOP 4
 static struct {
     bool held;
     int moved;
-    // Counts not yet a wheel step
+    // Counts times WHEEL_UNITS not yet a wheel unit
     int wheel;
     int hwheel;
 } scroll;
@@ -527,12 +531,13 @@ static void send_events(struct events *e) {
 }
 
 #if SCROLL
-// Counts to wheel steps, the remainder kept for the next report
+// Counts to wheel units (WHEEL_UNITS per divisor counts), the remainder kept
+// for the next report
 static int steps(int *acc, int counts) {
     int divisor = atomic_get(&scroll_divisor);
     int n;
 
-    *acc += counts;
+    *acc += counts * WHEEL_UNITS;
     n = *acc / divisor;
     *acc -= n * divisor;
     return n;

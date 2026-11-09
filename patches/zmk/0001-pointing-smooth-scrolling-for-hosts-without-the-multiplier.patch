@@ -1,0 +1,46 @@
+pointing: smooth scrolling for hosts that don't set the multiplier
+
+With CONFIG_ZMK_POINTING_SMOOTH_SCROLLING, wheel input comes in sixteenths
+of a step, and the input listener divides it by what the host's
+Resolution Multiplier leaves to do. It kept the remainder but reported the
+undivided value. And until the host sets the multiplier, it was taken as
+16, so a host that never sets it (no Resolution Multiplier support) would
+scroll 16 times too far. Report the divided value, and start at
+multiplier 1 (logical 0), which is what such a host assumes; hosts with
+support set theirs when they connect.
+
+Applies to petejohanson/zmk 5565f21.
+
+diff --git a/app/src/pointing/input_listener.c b/app/src/pointing/input_listener.c
+index 7c938a3..5914a5a 100644
+--- a/app/src/pointing/input_listener.c
++++ b/app/src/pointing/input_listener.c
+@@ -309,7 +309,7 @@ static void apply_resolution_scaling(struct input_listener_data *data, struct in
+     int16_t val = evt->value + *remainder;
+     int16_t scaled = val / (int16_t)div;
+     *remainder = val - (scaled * (int16_t)div);
+-    evt->value = val;
++    evt->value = scaled;
+ }
+ #endif // IS_ENABLED(CONFIG_ZMK_POINTING_SMOOTH_SCROLLING)
+ 
+diff --git a/app/src/pointing/resolution_multipliers.c b/app/src/pointing/resolution_multipliers.c
+index fa79846..8152fcc 100644
+--- a/app/src/pointing/resolution_multipliers.c
++++ b/app/src/pointing/resolution_multipliers.c
+@@ -13,11 +13,13 @@
+ 
+ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
+ 
++// Multiplier 1 (logical 0) until the host sets one: a host without Resolution
++// Multiplier support never does, and counts every unit as a whole wheel step.
+ static struct zmk_pointing_resolution_multipliers multipliers[ZMK_ENDPOINT_COUNT] = {
+     [0 ... ZMK_ENDPOINT_COUNT - 1] =
+         {
+-            .wheel = 15,
+-            .hor_wheel = 15,
++            .wheel = 0,
++            .hor_wheel = 0,
+         },
+ };
+ 

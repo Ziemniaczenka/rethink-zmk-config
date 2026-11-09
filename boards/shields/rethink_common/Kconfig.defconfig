@@ -15,3 +15,8 @@ RETHINK_DEFCONFIG_TRACKPOINT := rethink,trackpoint
 
 config ZMK_POINTING
     default $(dt_compat_enabled,$(RETHINK_DEFCONFIG_TRACKPOINT))
+
+# The stick scrolls in sixteenths of a step for hosts that set the HID
+# Resolution Multiplier (patches/zmk/0001-*)
+config ZMK_POINTING_SMOOTH_SCROLLING
+    default RETHINK_TRACKPOINT_SCROLL

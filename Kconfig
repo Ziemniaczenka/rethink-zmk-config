@@ -348,7 +348,9 @@ config RETHINK_TRACKPOINT_SCROLL
 	  each report's stronger axis, vertical, or sideways once that passes
 	  RETHINK_TRACKPOINT_SCROLL_H_DEAD_ZONE. Letting the middle button go
 	  clicks it only if the stick didn't move. "tp scroll" changes the
-	  numbers until the next reset.
+	  numbers until the next reset. Turns on ZMK_POINTING_SMOOTH_SCROLLING:
+	  the wheel in sixteenths of a step for hosts that set the HID
+	  Resolution Multiplier, whole steps for others.
 
 config RETHINK_TRACKPOINT_SCROLL_DIVISOR
 	int "Stick counts per wheel step"

@@ -12,6 +12,10 @@
 
 #include <rethink/trackpoint.h>
 
+#if IS_ENABLED(CONFIG_ZMK_POINTING_SMOOTH_SCROLLING)
+#include <zmk/pointing/resolution_multipliers.h>
+#endif
+
 // Bytes closer together than this belong to one packet or reply
 #define BURST_GAP_MS 3
 // The stick acknowledges a byte (0xFA) within about 20 ms
@@ -196,6 +200,14 @@ static int cmd_scroll(const struct shell *sh, size_t argc, char **argv) {
 
     shell_print(sh, "%d counts per wheel step; sideways: %d counts per report don't scroll",
                 divisor, dead_zone);
+#if IS_ENABLED(CONFIG_ZMK_POINTING_SMOOTH_SCROLLING)
+    // 16 once a host with smooth scrolling has set it, 1 otherwise
+    struct zmk_pointing_resolution_multipliers m =
+        zmk_pointing_resolution_multipliers_get_current_profile();
+
+    shell_print(sh, "This host's resolution multiplier: wheel %d, sideways %d", m.wheel + 1,
+                m.hor_wheel + 1);
+#endif
     return 0;
 }
 #endif
