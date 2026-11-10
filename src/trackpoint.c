@@ -29,6 +29,12 @@
 // The stick calibrates itself: its zero point is set at the self-test, and
 // again whenever the force stays constant for 0.53 s (hands off: drift
 // correction). E2 51 sets it to the present forces on request.
+//
+// Settings (report rate, the stick's sensitivity and the like, scrolling)
+// have Kconfig defaults and are kept in flash once changed. The stick's own
+// live in its RAM (E2 80/81 read and write a location): they survive a reset
+// command but not a power cycle, so each start writes them, after a power-on
+// only those that differ from the stick's power-on values (as Linux does).
 
 #define DT_DRV_COMPAT rethink_trackpoint
 
@@ -41,6 +47,7 @@
 #include <zephyr/input/input.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/settings/settings.h>
 #include <zephyr/sys/atomic.h>
 
 #include <zmk/event_manager.h>
@@ -96,6 +103,19 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1, "Exactly one rethink,t
 #define TP_READ_ID 0xe1
 #define TP_COMMAND 0xe2
 #define TP_RECALIBRATE 0x51
+// After TP_COMMAND: read a RAM location, write one, flip bits of a flag byte
+#define TP_READ_RAM 0x80
+#define TP_WRITE_RAM 0x81
+#define TP_TOGGLE 0x47
+// The first ID byte: IBM sticks have all the RAM settings below, others
+// (ALPS, Elan, NXP) only sensitivity and press-to-select
+#define TP_VARIANT_IBM 0x01
+// Press-to-select: a bit of flag byte 2C
+#define TP_PTS_FLAGS 0x2c
+#define TP_PTS_BIT 0x01
+
+// Settings are saved this long after the last change
+#define SAVE_DELAY K_SECONDS(3)
 
 // Report rates (F3 XX)
 static const uint8_t rates[] = {10, 20, 40, 60, 80, 100, 200};
@@ -114,10 +134,10 @@ static int conversions(int rate) { return rate == 60 ? 120 : rate >= 100 ? 100 :
 #define IDLE_RATE 80
 
 // Requests to the thread: TP_OFF, TP_ON, TP_RECAL, a key press after an idle
-// power-off, a packet with an error, a new report rate
-#define REQ_WAKE (TP_RATE_DN + 1)
-#define REQ_RESEND (TP_RATE_DN + 2)
-#define REQ_RATE (TP_RATE_DN + 3)
+// power-off, a packet with an error, a new report rate or stick setting
+#define REQ_WAKE (TP_PTS_TOG + 1)
+#define REQ_RESEND (TP_PTS_TOG + 2)
+#define REQ_CONFIG (TP_PTS_TOG + 3)
 
 // First packet byte: buttons, a bit that is always 1, sign bits
 #define PKT_BUTTONS 0x07
@@ -169,18 +189,68 @@ K_MSGQ_DEFINE(packet_queue, sizeof(pkt), 16, 1);
 // A pause this long starts the next packet
 static volatile uint32_t packet_gap_us = PACKET_GAP_US;
 static uint8_t buttons;
-// Report rate: chosen (Kconfig, keys, shell), and the stick's while pointing
-static atomic_t rate_set = ATOMIC_INIT(RATE);
+// The stick's report rate while pointing
 static uint8_t rate_now;
 // Uptime (ms) of the last packet with movement
 static uint32_t last_move;
 
 #define SCROLL IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_SCROLL)
+
+static const struct rethink_tp_setting_info infos[] = {
+    [RETHINK_TP_RATE] = {"rate", RATE, 10, 200, "reports per second: 10, 20, 40, 60, 80, 100, 200"},
+    [RETHINK_TP_SENSITIVITY] = {"sensitivity", CONFIG_RETHINK_TRACKPOINT_SENSITIVITY, 0, 255,
+                                "force scale, 128 = x1.0"},
+    [RETHINK_TP_INERTIA] = {"inertia", CONFIG_RETHINK_TRACKPOINT_NEG_INERTIA, 0, 255,
+                            "negative inertia: sharper starts and stops; 0 off"},
+    [RETHINK_TP_SPEED] = {"speed", CONFIG_RETHINK_TRACKPOINT_SPEED, 0, 255,
+                          "upper plateau: about 22 + 4.3 x this counts/s"},
+    [RETHINK_TP_DRIFT_TIME] = {"drift_time", CONFIG_RETHINK_TRACKPOINT_DRIFT_TIME, 1, 255,
+                               "hands off this long (107 ms steps): new zero point"},
+    [RETHINK_TP_PRESS_TO_SELECT] = {"press_to_select",
+                                    IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_PRESS_TO_SELECT), 0, 1,
+                                    "pressing the stick clicks"},
 #if SCROLL
-// Stick counts per wheel step; sideways counts per report that don't scroll
-static atomic_t scroll_divisor = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SCROLL_DIVISOR);
-static atomic_t scroll_dead_zone = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SCROLL_H_DEAD_ZONE);
+    [RETHINK_TP_SCROLL_DIVISOR] = {"scroll_divisor", CONFIG_RETHINK_TRACKPOINT_SCROLL_DIVISOR, 1,
+                                   255, "stick counts per wheel step"},
+    [RETHINK_TP_SCROLL_DEAD_ZONE] = {"scroll_dead_zone",
+                                     CONFIG_RETHINK_TRACKPOINT_SCROLL_H_DEAD_ZONE, 0, 127,
+                                     "sideways counts per report that don't scroll"},
 #endif
+};
+BUILD_ASSERT(ARRAY_SIZE(infos) == RETHINK_TP_SETTINGS);
+
+static atomic_t values[] = {
+    [RETHINK_TP_RATE] = ATOMIC_INIT(RATE),
+    [RETHINK_TP_SENSITIVITY] = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SENSITIVITY),
+    [RETHINK_TP_INERTIA] = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_NEG_INERTIA),
+    [RETHINK_TP_SPEED] = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SPEED),
+    [RETHINK_TP_DRIFT_TIME] = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_DRIFT_TIME),
+    [RETHINK_TP_PRESS_TO_SELECT] =
+        ATOMIC_INIT(IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_PRESS_TO_SELECT)),
+#if SCROLL
+    [RETHINK_TP_SCROLL_DIVISOR] = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SCROLL_DIVISOR),
+    [RETHINK_TP_SCROLL_DEAD_ZONE] = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SCROLL_H_DEAD_ZONE),
+#endif
+};
+BUILD_ASSERT(ARRAY_SIZE(values) == RETHINK_TP_SETTINGS);
+
+static int setting(enum rethink_tp_setting s) { return atomic_get(&values[s]); }
+
+// The stick's settings in its RAM, with its power-on values
+static const struct {
+    uint8_t loc;
+    uint8_t power_on;
+    enum rethink_tp_setting setting;
+} stick_ram[] = {
+    {0x4a, 0x80, RETHINK_TP_SENSITIVITY},
+    {0x4d, 0x06, RETHINK_TP_INERTIA},
+    {0x60, 0x61, RETHINK_TP_SPEED},
+    {0x5f, 0x05, RETHINK_TP_DRIFT_TIME},
+};
+// Stick settings changed since they were last written
+static atomic_t stick_changed;
+// The first ID byte; 0 for a plain PS/2 mouse
+static uint8_t variant;
 // Wheel units per step: sixteenths with smooth scrolling, which the input
 // listener divides back into whole steps for a host that doesn't set the HID
 // Resolution Multiplier
@@ -534,7 +604,7 @@ static void send_events(struct events *e) {
 // Counts to wheel units (WHEEL_UNITS per divisor counts), the remainder kept
 // for the next report
 static int steps(int *acc, int counts) {
-    int divisor = atomic_get(&scroll_divisor);
+    int divisor = setting(RETHINK_TP_SCROLL_DIVISOR);
     int n;
 
     *acc += counts * WHEEL_UNITS;
@@ -547,7 +617,7 @@ static int steps(int *acc, int counts) {
 // so a push up that leans a little doesn't scroll sideways. PS/2 and HID
 // both count up and right as positive here.
 static void scroll_by(struct events *e, int dx, int dy) {
-    int dead = atomic_get(&scroll_dead_zone);
+    int dead = setting(RETHINK_TP_SCROLL_DEAD_ZONE);
     int n = 0;
 
     scroll.moved += abs(dx) + abs(dy);
@@ -612,23 +682,6 @@ static void report(const uint8_t p[3]) {
         input_report_key(tp_dev(), INPUT_BTN_2, 0, true, K_FOREVER);
     }
 }
-
-#if SCROLL
-int rethink_tp_scroll_set(int divisor, int dead_zone) {
-    if (divisor < 1 || divisor > 255 || dead_zone < 0 || dead_zone > 127) {
-        return -EINVAL;
-    }
-
-    atomic_set(&scroll_divisor, divisor);
-    atomic_set(&scroll_dead_zone, dead_zone);
-    return 0;
-}
-
-void rethink_tp_scroll_get(int *divisor, int *dead_zone) {
-    *divisor = atomic_get(&scroll_divisor);
-    *dead_zone = atomic_get(&scroll_dead_zone);
-}
-#endif
 
 // Reply bytes after an acknowledge
 static int read_reply(uint8_t *buf, size_t len, k_timeout_t first) {
@@ -699,6 +752,71 @@ static int stream_set(bool on) {
     return -EIO;
 }
 
+// Command bytes, each acknowledged
+static int commands(const uint8_t *bytes, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        int err = command(bytes[i]);
+
+        if (err) {
+            return err;
+        }
+    }
+    return 0;
+}
+
+static int ram_write(uint8_t loc, uint8_t value) {
+    const uint8_t bytes[] = {TP_COMMAND, TP_WRITE_RAM, loc, value};
+
+    return commands(bytes, sizeof(bytes));
+}
+
+static int ram_read(uint8_t loc, uint8_t *value) {
+    const uint8_t bytes[] = {TP_COMMAND, TP_READ_RAM, loc};
+    int err = commands(bytes, sizeof(bytes));
+
+    return err ? err : read_reply(value, 1, REPLY_TIMEOUT);
+}
+
+// Press-to-select is a flag bit, flipped by E2 47 2C 01: read first
+static int pts_write(bool on) {
+    const uint8_t toggle[] = {TP_COMMAND, TP_TOGGLE, TP_PTS_FLAGS, TP_PTS_BIT};
+    uint8_t flags;
+    int err = ram_read(TP_PTS_FLAGS, &flags);
+
+    if (err || !(flags & TP_PTS_BIT) == !on) {
+        return err;
+    }
+    return commands(toggle, sizeof(toggle));
+}
+
+// The stick's settings to its RAM, with streaming off. Right after a power-on
+// only those that differ from its power-on values, which differ from stick to
+// stick for some makers.
+static int stick_settings_write(bool power_on) {
+    atomic_clear(&stick_changed);
+    if (variant == 0) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < ARRAY_SIZE(stick_ram); i++) {
+        int value = setting(stick_ram[i].setting);
+
+        if ((power_on && value == stick_ram[i].power_on) ||
+            (variant != TP_VARIANT_IBM && stick_ram[i].setting != RETHINK_TP_SENSITIVITY)) {
+            continue;
+        }
+        int err = ram_write(stick_ram[i].loc, value);
+
+        if (err) {
+            return err;
+        }
+    }
+
+    bool pts = setting(RETHINK_TP_PRESS_TO_SELECT);
+
+    return power_on && !pts ? 0 : pts_write(pts);
+}
+
 static void note_rate(uint8_t rate) {
     rate_now = rate;
     packet_gap_us = MIN(PACKET_GAP_US, 500000 / rate);
@@ -708,14 +826,14 @@ static void note_rate(uint8_t rate) {
 // while the stick is still
 static bool slow_idle(void) {
     return IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_SLOW_IDLE) &&
-           conversions(atomic_get(&rate_set)) > conversions(IDLE_RATE);
+           conversions(setting(RETHINK_TP_RATE)) > conversions(IDLE_RATE);
 }
 
 static uint32_t still_ms(void) { return k_uptime_get_32() - last_move; }
 
 // The chosen rate, or IDLE_RATE once the stick is still
 static uint8_t rate_wanted(void) {
-    return slow_idle() && still_ms() >= SLOW_IDLE_MS ? IDLE_RATE : atomic_get(&rate_set);
+    return slow_idle() && still_ms() >= SLOW_IDLE_MS ? IDLE_RATE : setting(RETHINK_TP_RATE);
 }
 
 static int start_locked(void) {
@@ -730,6 +848,9 @@ static int start_locked(void) {
         LOG_INF("No answer to the reset command: power cycle");
         rethink_tp_power_off();
     }
+    // Its RAM settings at their power-on values; a reset command keeps them
+    bool power_on = !powered;
+
     if (!powered) {
         err = rethink_tp_power_on();
     }
@@ -752,8 +873,16 @@ static int start_locked(void) {
     // TrackPoints answer with their maker and firmware; other PS/2 mice don't
     if (command(TP_READ_ID) == 0 && read_reply(reply, sizeof(reply), REPLY_TIMEOUT) == 0) {
         LOG_INF("TrackPoint ID %02x, firmware %02x", reply[0], reply[1]);
+        variant = reply[0];
     } else {
         LOG_INF("No TrackPoint ID: used as a plain PS/2 mouse");
+        rethink_tp_flush();
+        variant = 0;
+    }
+
+    err = stick_settings_write(power_on);
+    if (err) {
+        LOG_WRN("Failed to write the stick's settings (%d)", err);
         rethink_tp_flush();
     }
 
@@ -855,34 +984,148 @@ int rethink_tp_recalibrate(void) {
     return err;
 }
 
-int rethink_tp_set_rate(int rate) {
-    bool valid = false;
+int rethink_tp_rate_now(void) { return pointing ? rate_now : 0; }
 
+const struct rethink_tp_setting_info *rethink_tp_setting_info(enum rethink_tp_setting s) {
+    return s < RETHINK_TP_SETTINGS ? &infos[s] : NULL;
+}
+
+int rethink_tp_setting_get(enum rethink_tp_setting s) {
+    return s < RETHINK_TP_SETTINGS ? setting(s) : 0;
+}
+
+static bool setting_valid(enum rethink_tp_setting s, int value) {
+    if (s >= RETHINK_TP_SETTINGS || value < infos[s].min || value > infos[s].max) {
+        return false;
+    }
+    if (s != RETHINK_TP_RATE) {
+        return true;
+    }
     for (size_t i = 0; i < ARRAY_SIZE(rates); i++) {
-        valid |= rates[i] == rate;
+        if (rates[i] == value) {
+            return true;
+        }
     }
-    if (!valid) {
-        return -EINVAL;
-    }
+    return false;
+}
 
-    atomic_set(&rate_set, rate);
-    LOG_INF("%d reports/s%s", rate, slow_idle() ? ", 80 while still" : "");
-    post_request(REQ_RATE);
+static bool stick_setting(enum rethink_tp_setting s) {
+    return s >= RETHINK_TP_SENSITIVITY && s <= RETHINK_TP_PRESS_TO_SELECT;
+}
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+#define SETTINGS_ROOT "rethink/tp"
+
+// Settings not saved yet, one bit each
+static atomic_t unsaved;
+
+// A setting at its default is deleted, so a new Kconfig default applies
+static void save(struct k_work *work) {
+    atomic_val_t mask = atomic_clear(&unsaved);
+
+    for (int s = 0; s < RETHINK_TP_SETTINGS; s++) {
+        if (!(mask & BIT(s))) {
+            continue;
+        }
+
+        char key[48];
+        int32_t value = setting(s);
+        int err;
+
+        snprintk(key, sizeof(key), SETTINGS_ROOT "/%s", infos[s].name);
+        if (value == infos[s].def) {
+            err = settings_delete(key);
+        } else {
+            err = settings_save_one(key, &value, sizeof(value));
+        }
+        if (err && err != -ENOENT) {
+            LOG_ERR("Failed to save %s (%d)", key, err);
+        }
+    }
+}
+
+static K_WORK_DELAYABLE_DEFINE(save_work, save);
+
+static void save_later(atomic_val_t mask) {
+    atomic_or(&unsaved, mask);
+    k_work_reschedule(&save_work, SAVE_DELAY);
+}
+
+// Settings loaded at boot (main(), before the stick starts)
+static K_SEM_DEFINE(settings_loaded, 0, 1);
+
+static int tp_settings_set(const char *name, size_t len, settings_read_cb read_cb,
+                           void *cb_arg) {
+    for (int s = 0; s < RETHINK_TP_SETTINGS; s++) {
+        const char *next;
+        int32_t value;
+
+        if (!settings_name_steq(name, infos[s].name, &next) || next) {
+            continue;
+        }
+        if (len != sizeof(value) || read_cb(cb_arg, &value, sizeof(value)) != sizeof(value)) {
+            return -EINVAL;
+        }
+        if (setting_valid(s, value)) {
+            atomic_set(&values[s], value);
+        } else {
+            LOG_WRN("Saved %s %d out of range: default %d", infos[s].name, value, infos[s].def);
+        }
+        return 0;
+    }
+    return -ENOENT;
+}
+
+static int tp_settings_commit(void) {
+    k_sem_give(&settings_loaded);
     return 0;
 }
 
-void rethink_tp_rate_get(int *set, int *now) {
-    *set = atomic_get(&rate_set);
-    *now = pointing ? rate_now : 0;
+SETTINGS_STATIC_HANDLER_DEFINE(rethink_tp, SETTINGS_ROOT, NULL, tp_settings_set,
+                               tp_settings_commit, NULL);
+#else
+static void save_later(atomic_val_t mask) {}
+#endif
+
+int rethink_tp_setting_set(enum rethink_tp_setting s, int value) {
+    if (!setting_valid(s, value)) {
+        return -EINVAL;
+    }
+    if (atomic_set(&values[s], value) == value) {
+        return 0;
+    }
+
+    save_later(BIT(s));
+    if (s == RETHINK_TP_RATE) {
+        LOG_INF("%d reports/s%s", value, slow_idle() ? ", 80 while still" : "");
+    } else {
+        LOG_INF("%s %d", infos[s].name, value);
+    }
+    if (stick_setting(s)) {
+        atomic_set(&stick_changed, 1);
+    }
+    if (s == RETHINK_TP_RATE || stick_setting(s)) {
+        post_request(REQ_CONFIG);
+    }
+    return 0;
+}
+
+void rethink_tp_settings_reset(void) {
+    for (int s = 0; s < RETHINK_TP_SETTINGS; s++) {
+        rethink_tp_setting_set(s, infos[s].def);
+    }
+    // Including values saved under an older default
+    save_later(BIT_MASK(RETHINK_TP_SETTINGS));
 }
 
 // One step along rates[], stopping at either end
 static int rate_step(int step) {
-    int rate = atomic_get(&rate_set);
+    int rate = setting(RETHINK_TP_RATE);
 
     for (int i = 0; i < (int)ARRAY_SIZE(rates); i++) {
         if (rates[i] == rate) {
-            return rethink_tp_set_rate(rates[CLAMP(i + step, 0, (int)ARRAY_SIZE(rates) - 1)]);
+            return rethink_tp_setting_set(RETHINK_TP_RATE,
+                                          rates[CLAMP(i + step, 0, (int)ARRAY_SIZE(rates) - 1)]);
         }
     }
     return -EINVAL;
@@ -897,6 +1140,9 @@ int rethink_tp_request(uint32_t cmd) {
         return rate_step(1);
     case TP_RATE_DN:
         return rate_step(-1);
+    case TP_PTS_TOG:
+        return rethink_tp_setting_set(RETHINK_TP_PRESS_TO_SELECT,
+                                      !setting(RETHINK_TP_PRESS_TO_SELECT));
     case TP_OFF:
     case TP_ON:
     case TP_RECAL:
@@ -990,22 +1236,23 @@ static void resend_packet(void) {
 }
 
 
-// A new report rate while pointing, with streaming off around it
-// (specification 2.7): about 10 ms without packets. A failure restarts the
-// stick.
-static void rate_change_locked(uint8_t rate) {
+// A new report rate or stick settings while pointing, with streaming off
+// around them (specification 2.7): about 10 ms without packets for a rate. A
+// failure restarts the stick.
+static void reconfigure_locked(uint8_t rate, bool stick) {
     wait_packet_end();
     commanding = true;
     report_queued();
     rethink_tp_flush();
 
+    const uint8_t set_rate[] = {PS2_SET_RATE, rate};
     int err = stream_set(false);
 
-    if (!err) {
-        err = command(PS2_SET_RATE);
+    if (!err && rate != rate_now) {
+        err = commands(set_rate, sizeof(set_rate));
     }
-    if (!err) {
-        err = command(rate);
+    if (!err && stick) {
+        err = stick_settings_write(false);
     }
     if (!err) {
         err = stream_set(true);
@@ -1016,25 +1263,27 @@ static void rate_change_locked(uint8_t rate) {
     commanding = false;
 
     if (err) {
-        LOG_WRN("Failed to change to %d reports/s (%d), restarting the stick", rate, err);
+        LOG_WRN("Failed to change the rate or settings (%d), restarting the stick", err);
         start_locked();
         return;
     }
     note_rate(rate);
     stats.rate_changes++;
-    LOG_DBG("%d reports/s", rate);
+    LOG_DBG("%d reports/s%s", rate, stick ? ", stick settings written" : "");
 }
 
-static void rate_update(void) {
-    if (!pointing || rate_wanted() == rate_now) {
+static bool reconfigure_due(void) {
+    return pointing && (rate_wanted() != rate_now || atomic_get(&stick_changed));
+}
+
+static void reconfigure(void) {
+    if (!reconfigure_due()) {
         return;
     }
 
     k_mutex_lock(&start_lock, K_FOREVER);
-    uint8_t rate = rate_wanted();
-
-    if (pointing && rate != rate_now) {
-        rate_change_locked(rate);
+    if (reconfigure_due()) {
+        reconfigure_locked(rate_wanted(), atomic_get(&stick_changed));
     }
     k_mutex_unlock(&start_lock);
 }
@@ -1095,6 +1344,12 @@ static void tp_thread(void *p1, void *p2, void *p3) {
                                  &packet_queue),
     };
 
+#if IS_ENABLED(CONFIG_SETTINGS)
+    // The saved settings first; a timeout in case nothing loads them
+    if (k_sem_take(&settings_loaded, K_SECONDS(2))) {
+        LOG_WRN("Settings not loaded: defaults");
+    }
+#endif
     rethink_tp_start();
 
     for (;;) {
@@ -1108,7 +1363,7 @@ static void tp_thread(void *p1, void *p2, void *p3) {
         events[1].state = K_POLL_STATE_NOT_READY;
 
         report_queued();
-        rate_update();
+        reconfigure();
 
         if (idle_left_ms() == 0) {
             LOG_INF("Unused for %d min: pointing stick off until a key is pressed",

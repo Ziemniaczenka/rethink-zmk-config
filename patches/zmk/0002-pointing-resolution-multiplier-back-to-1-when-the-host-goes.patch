@@ -1,0 +1,88 @@
+pointing: resolution multiplier back to 1 when the host goes
+
+The multiplier a host set stayed for its BLE profile or USB after it
+disconnected. A host that comes back (from sleep, say) and counts on the
+device starting at multiplier 1 again, without setting it, then got
+sixteenths taken for whole steps: 16 times the scrolling, until a reboot.
+A different host on the same profile or port likewise. Reset it when the
+BLE connection drops or USB is unplugged; a host with Resolution
+Multiplier support sets it again when it connects.
+
+Applies to petejohanson/zmk 5565f21 after
+0001-pointing-smooth-scrolling-for-hosts-without-the-multiplier.patch.
+
+diff --git a/app/src/pointing/resolution_multipliers.c b/app/src/pointing/resolution_multipliers.c
+index 8152fcc..e7c99c5 100644
+--- a/app/src/pointing/resolution_multipliers.c
++++ b/app/src/pointing/resolution_multipliers.c
+@@ -7,10 +7,17 @@
+ #include <zephyr/kernel.h>
+ #include <zephyr/logging/log.h>
+ 
++#include <zephyr/bluetooth/conn.h>
++
+ #include <zmk/ble.h>
+ #include <zmk/endpoints.h>
++#include <zmk/event_manager.h>
+ #include <zmk/pointing/resolution_multipliers.h>
+ 
++#if IS_ENABLED(CONFIG_ZMK_USB)
++#include <zmk/events/usb_conn_state_changed.h>
++#endif
++
+ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
+ 
+ // Multiplier 1 (logical 0) until the host sets one: a host without Resolution
+@@ -56,3 +63,52 @@ void zmk_pointing_resolution_multipliers_process_report(
+     LOG_DBG("Update resolution multipliers: endpoint=%d, wheel=%d, hor_wheel=%d",
+             endpoint.transport, vals.wheel, vals.hor_wheel);
+ }
++
++// Back to multiplier 1 when the host goes. A host sets the multiplier again
++// after it connects, or expects whole steps; one that comes back from sleep
++// may count on that, and so does a different host on the same profile or
++// port. Kept, the old multiplier scrolled 16 times too far there.
++static void reset_profile(struct zmk_endpoint_instance endpoint) {
++    struct zmk_pointing_resolution_multipliers vals = {.wheel = 0, .hor_wheel = 0};
++
++    zmk_pointing_resolution_multipliers_set_profile(vals, endpoint);
++}
++
++#if IS_ENABLED(CONFIG_ZMK_BLE)
++static void reset_on_disconnect(struct bt_conn *conn, uint8_t reason) {
++    int profile = zmk_ble_profile_index(bt_conn_get_dst(conn));
++
++    if (profile < 0) {
++        return;
++    }
++
++    struct zmk_endpoint_instance endpoint = {
++        .transport = ZMK_TRANSPORT_BLE,
++        .ble = {.profile_index = profile},
++    };
++
++    reset_profile(endpoint);
++    LOG_DBG("Reset resolution multipliers: profile %d disconnected", profile);
++}
++
++BT_CONN_CB_DEFINE(resolution_multipliers_conn_cb) = {
++    .disconnected = reset_on_disconnect,
++};
++#endif // IS_ENABLED(CONFIG_ZMK_BLE)
++
++#if IS_ENABLED(CONFIG_ZMK_USB)
++static int reset_on_usb_unplug(const zmk_event_t *eh) {
++    const struct zmk_usb_conn_state_changed *ev = as_zmk_usb_conn_state_changed(eh);
++
++    if (ev && ev->conn_state == ZMK_USB_CONN_NONE) {
++        struct zmk_endpoint_instance endpoint = {.transport = ZMK_TRANSPORT_USB};
++
++        reset_profile(endpoint);
++        LOG_DBG("Reset resolution multipliers: USB unplugged");
++    }
++    return ZMK_EV_EVENT_BUBBLE;
++}
++
++ZMK_LISTENER(resolution_multipliers, reset_on_usb_unplug);
++ZMK_SUBSCRIPTION(resolution_multipliers, zmk_usb_conn_state_changed);
++#endif // IS_ENABLED(CONFIG_ZMK_USB)

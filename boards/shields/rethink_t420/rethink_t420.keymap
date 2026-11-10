@@ -20,7 +20,9 @@
  * and are left out.
  *
  * Fn+F8 (pointing device) switches the TrackPoint on and off; Ctrl+Fn+F8
- * recalibrates it, with the hands off the stick. Report rate keys
+ * recalibrates it, with the hands off the stick; Alt+Fn+F8 switches
+ * press-to-select (clicking by pressing the stick) on and off, kept in
+ * flash. Report rate keys
  * (Shift+Fn+F8 up, Ctrl+Shift+Fn+F8 down) are commented out below.
  *
  * Fn+ScrLk (NmLk) toggles the embedded keypad: the digits on 7-9, U-O, J-L
@@ -37,8 +39,15 @@
 
 / {
     behaviors {
-        // Fn+F8: TrackPoint on/off, with Ctrl: recalibrate
+        // Fn+F8: TrackPoint on/off, with Ctrl: recalibrate, with Alt:
+        // press-to-select on/off
         tp_f8: tp_f8 {
+            compatible = "zmk,behavior-mod-morph";
+            #binding-cells = <0>;
+            bindings = <&tp_f8_ctrl>, <&tp TP_PTS_TOG>;
+            mods = <(MOD_LALT|MOD_RALT)>;
+        };
+        tp_f8_ctrl: tp_f8_ctrl {
             compatible = "zmk,behavior-mod-morph";
             #binding-cells = <0>;
             bindings = <&tp TP_TOG>, <&tp TP_RECAL>;

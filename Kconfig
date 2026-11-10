@@ -327,8 +327,8 @@ config RETHINK_TRACKPOINT_SAMPLE_RATE
 	  PS/2 sample rate: 10, 20, 40, 60, 80, 100 or 200. Battery current
 	  with a T420 stick, still: 19.1 mA at 40 and 80/s, 20.3 at 10 and
 	  20/s, 20.5 at 100 and 200/s, 21.7 at 60/s. At 200/s its packets
-	  still came 10 ms apart. &tp TP_RATE_UP/TP_RATE_DN and "tp rate"
-	  change it until the next reset.
+	  still came 10 ms apart. "tp set rate" and &tp TP_RATE_UP/TP_RATE_DN
+	  change it; the new rate is kept in flash.
 
 config RETHINK_TRACKPOINT_SLOW_IDLE
 	bool "80 reports per second while the stick is still (experimental)"
@@ -340,6 +340,47 @@ config RETHINK_TRACKPOINT_SLOW_IDLE
 	  With a T420 stick at 100/s: 19.1 instead of 20.5 mA while still.
 	  For sticks where a faster rate is worth having.
 
+config RETHINK_TRACKPOINT_SENSITIVITY
+	int "Sensitivity"
+	default 192
+	range 0 255
+	help
+	  The stick's force scale before its transfer function: 128 is x1.0,
+	  0-255 is x0 to x1.99; 192 is x1.5. The stick's power-on value is 128
+	  (the TrackPoint specification, and Linux). Written to the stick after
+	  each start; "tp set sensitivity" changes it and keeps it in flash.
+
+config RETHINK_TRACKPOINT_NEG_INERTIA
+	int "Negative inertia"
+	default 6
+	range 0 255
+	help
+	  Boosts changes of force, so the pointer starts and stops more
+	  sharply; 0 is off. Power-on value 6. IBM sticks only (TrackPoint ID
+	  01, the T420's), as are the speed and drift time.
+
+config RETHINK_TRACKPOINT_SPEED
+	int "Upper plateau speed"
+	default 150
+	range 0 255
+	help
+	  Pointer speed under a firm push: about 22 + 4.3 x this counts a
+	  second (667 at 150, 439 at the power-on value 97).
+
+config RETHINK_TRACKPOINT_DRIFT_TIME
+	int "Drift correction time"
+	default 10
+	range 1 255
+	help
+	  Hands off for this long, in 107 ms steps, and the stick takes the
+	  present forces as its zero point. Power-on value 5 (0.53 s).
+
+config RETHINK_TRACKPOINT_PRESS_TO_SELECT
+	bool "Press-to-select"
+	help
+	  Pressing the stick clicks. Off at power-on. &tp TP_PTS_TOG switches
+	  it (Alt+Fn+F8 on the T420 and L420).
+
 config RETHINK_TRACKPOINT_SCROLL
 	bool "Middle button held: the stick scrolls"
 	default y
@@ -347,8 +388,9 @@ config RETHINK_TRACKPOINT_SCROLL
 	  While the middle button is held, movement turns into the wheel:
 	  each report's stronger axis, vertical, or sideways once that passes
 	  RETHINK_TRACKPOINT_SCROLL_H_DEAD_ZONE. Letting the middle button go
-	  clicks it only if the stick didn't move. "tp scroll" changes the
-	  numbers until the next reset. Turns on ZMK_POINTING_SMOOTH_SCROLLING:
+	  clicks it only if the stick didn't move. "tp set scroll_divisor" and
+	  "tp set scroll_dead_zone" change the numbers and keep them in flash.
+	  Turns on ZMK_POINTING_SMOOTH_SCROLLING:
 	  the wheel in sixteenths of a step for hosts that set the HID
 	  Resolution Multiplier, whole steps for others.
 
@@ -401,6 +443,15 @@ module-str = ReThink pointing stick
 source "subsys/logging/Kconfig.template.log_config"
 
 endif # RETHINK_TRACKPOINT
+
+config RETHINK_BLE_SHELL
+	bool "ble shell commands"
+	default y
+	depends on SHELL && ZMK_BLE
+	help
+	  "ble conn" shows the Bluetooth connection interval the host chose and
+	  asks it for another. The rethink-usb-shell snippet provides the
+	  shell.
 
 DT_COMPAT_RETHINK_BACKLIGHT := rethink,backlight
 

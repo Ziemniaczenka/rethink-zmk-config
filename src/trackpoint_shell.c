@@ -6,6 +6,7 @@
 // "tp" shell commands: power the pointing stick and talk PS/2 to it by hand.
 
 #include <stdlib.h>
+#include <string.h>
 
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
@@ -162,55 +163,70 @@ static int cmd_read(const struct shell *sh, size_t argc, char **argv) {
     return 0;
 }
 
-static int cmd_rate(const struct shell *sh, size_t argc, char **argv) {
-    int set;
-    int now;
+// A setting by its name or the start of one: -1 none, -2 more than one
+static int find_setting(const char *arg) {
+    size_t len = strlen(arg);
+    int found = -1;
 
-    if (argc > 1 && rethink_tp_set_rate(atoi(argv[1]))) {
-        shell_error(sh, "Rates: 10, 20, 40, 60, 80, 100, 200");
-        return -EINVAL;
-    }
+    for (int s = 0; s < RETHINK_TP_SETTINGS; s++) {
+        const char *name = rethink_tp_setting_info(s)->name;
 
-    rethink_tp_rate_get(&set, &now);
-    if (argc > 1 || !now) {
-        // The thread changes the stick's rate after this
-        shell_print(sh, "%d reports/s", set);
-    } else {
-        shell_print(sh, "%d reports/s set, the stick at %d/s now", set, now);
+        if (strcmp(name, arg) == 0) {
+            return s;
+        }
+        if (strncmp(name, arg, len) == 0) {
+            if (found >= 0) {
+                return -2;
+            }
+            found = s;
+        }
     }
-    return 0;
+    return found;
 }
 
-#if IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_SCROLL)
-static int cmd_scroll(const struct shell *sh, size_t argc, char **argv) {
-    int divisor;
-    int dead_zone;
+static void print_setting(const struct shell *sh, int s) {
+    const struct rethink_tp_setting_info *info = rethink_tp_setting_info(s);
+    int value = rethink_tp_setting_get(s);
 
-    rethink_tp_scroll_get(&divisor, &dead_zone);
-    if (argc > 1) {
-        divisor = atoi(argv[1]);
+    shell_print(sh, "%-16s %3d%c  %s (%d-%d, default %d)", info->name, value,
+                value != info->def ? '*' : ' ', info->help, info->min, info->max, info->def);
+}
+
+// The stick's settings are written to it at once while pointing
+static int cmd_set(const struct shell *sh, size_t argc, char **argv) {
+    if (argc == 1) {
+        for (int s = 0; s < RETHINK_TP_SETTINGS; s++) {
+            print_setting(sh, s);
+        }
+        shell_print(sh, "*: changed, kept in flash. \"tp set defaults\" puts all back.");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "defaults") == 0) {
+        rethink_tp_settings_reset();
+        shell_print(sh, "All settings at their defaults");
+        return 0;
+    }
+
+    int s = find_setting(argv[1]);
+
+    if (s < 0) {
+        shell_error(sh, "%s: %s", argv[1],
+                    s == -2 ? "more than one setting starts so" : "no such setting (tp set)");
+        return -EINVAL;
     }
     if (argc > 2) {
-        dead_zone = atoi(argv[2]);
-    }
-    if (rethink_tp_scroll_set(divisor, dead_zone)) {
-        shell_error(sh, "Divisor 1-255, dead zone 0-127");
-        return -EINVAL;
-    }
+        const struct rethink_tp_setting_info *info = rethink_tp_setting_info(s);
+        char *end;
+        long value = strtol(argv[2], &end, 0);
 
-    shell_print(sh, "%d counts per wheel step; sideways: %d counts per report don't scroll",
-                divisor, dead_zone);
-#if IS_ENABLED(CONFIG_ZMK_POINTING_SMOOTH_SCROLLING)
-    // 16 once a host with smooth scrolling has set it, 1 otherwise
-    struct zmk_pointing_resolution_multipliers m =
-        zmk_pointing_resolution_multipliers_get_current_profile();
-
-    shell_print(sh, "This host's resolution multiplier: wheel %d, sideways %d", m.wheel + 1,
-                m.hor_wheel + 1);
-#endif
+        if (*end || rethink_tp_setting_set(s, value)) {
+            shell_error(sh, "%s: %d-%d, %s", info->name, info->min, info->max, info->help);
+            return -EINVAL;
+        }
+    }
+    print_setting(sh, s);
     return 0;
 }
-#endif
 
 static int cmd_stat(const struct shell *sh, size_t argc, char **argv) {
     struct rethink_tp_stats s;
@@ -225,13 +241,20 @@ static int cmd_stat(const struct shell *sh, size_t argc, char **argv) {
     shell_print(sh, "Packets: %u reported, %u resyncs; with an error: %u sent again, %u lost",
                 s.packets, s.resyncs, s.resent, s.lost);
 
-    int set;
-    int now;
+    int now = rethink_tp_rate_now();
 
-    rethink_tp_rate_get(&set, &now);
     if (now) {
-        shell_print(sh, "Rate: %d/s set, %d/s now; %u changes", set, now, s.rate_changes);
+        shell_print(sh, "Rate: %d/s set, %d/s now; %u changes of rate or settings",
+                    rethink_tp_setting_get(RETHINK_TP_RATE), now, s.rate_changes);
     }
+#if IS_ENABLED(CONFIG_ZMK_POINTING_SMOOTH_SCROLLING)
+    // 16 once a host with smooth scrolling has set it, 1 otherwise
+    struct zmk_pointing_resolution_multipliers m =
+        zmk_pointing_resolution_multipliers_get_current_profile();
+
+    shell_print(sh, "Wheel resolution multiplier (this host): %d, sideways %d", m.wheel + 1,
+                m.hor_wheel + 1);
+#endif
     shell_print(sh, "Sent: %u bytes; %u not clocked in, %u not acknowledged", s.tx_bytes,
                 s.tx_timeouts, s.tx_nacks);
     if (s.period_us) {
@@ -256,13 +279,10 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD_ARG(read, NULL,
                   "[seconds]: show what the stick sends (default 5); while pointing, the packets",
                   cmd_read, 1, 1),
-    SHELL_CMD_ARG(rate, NULL, "[10|20|40|60|80|100|200]: reports per second", cmd_rate, 1, 1),
-#if IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_SCROLL)
-    SHELL_CMD_ARG(scroll, NULL,
-                  "[divisor [dead zone]]: counts per wheel step, sideways counts that don't scroll",
-                  cmd_scroll, 1, 2),
-#endif
-    SHELL_CMD_ARG(stat, NULL, "[clear]: link counters and clock period", cmd_stat, 1, 1),
+    SHELL_CMD_ARG(set, NULL,
+                  "[name [value]] | defaults: rate, the stick's settings, scrolling; saved",
+                  cmd_set, 1, 2),
+    SHELL_CMD_ARG(stat, NULL, "[clear]: link counters, rate, clock period", cmd_stat, 1, 1),
     SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(tp, &tp_cmds, "Pointing stick (PS/2) by hand", NULL);

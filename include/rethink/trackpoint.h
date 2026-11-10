@@ -36,28 +36,62 @@ bool rethink_tp_powered(void);
 // True while movement goes to ZMK
 bool rethink_tp_pointing(void);
 
-// TP_OFF, TP_ON, TP_TOG, TP_RECAL, TP_RATE_UP or TP_RATE_DN
+// TP_OFF, TP_ON, TP_TOG, TP_RECAL, TP_RATE_UP, TP_RATE_DN or TP_PTS_TOG
 // (dt-bindings/rethink/trackpoint.h), carried out by the stick's thread;
-// TP_TOG and the new rate are decided now. Returns at once, -EINVAL for
+// TP_TOG, the new rate and press-to-select (settings, so saved) are decided
+// now. Returns at once, -EINVAL for
 // anything else. The thread also powers the stick off once neither it nor a
 // key was used for CONFIG_RETHINK_TRACKPOINT_IDLE_OFF_MIN; the next key press
 // starts it again.
 int rethink_tp_request(uint32_t cmd);
 
-// Report rate (PS/2 sample rate: 10, 20, 40, 60, 80, 100 or 200 a second;
-// -EINVAL for others), applied by the thread while pointing and at each
-// start; CONFIG_RETHINK_TRACKPOINT_SAMPLE_RATE until changed. With
-// CONFIG_RETHINK_TRACKPOINT_SLOW_IDLE the stick reports at 80/s while still.
-int rethink_tp_set_rate(int rate);
+// Settings. Kconfig gives the defaults; a changed one is kept in flash
+// (saved a few seconds after the last change). The thread writes the stick's
+// own to it after each start, and while pointing as they change.
+enum rethink_tp_setting {
+    // Reports per second (PS/2 sample rate): 10, 20, 40, 60, 80, 100 or 200.
+    // With CONFIG_RETHINK_TRACKPOINT_SLOW_IDLE 80/s while the stick is still.
+    RETHINK_TP_RATE,
+    // The stick's: force scale (128 = x1.0)
+    RETHINK_TP_SENSITIVITY,
+    // The stick's, IBM sticks only: negative inertia, upper plateau speed,
+    // drift correction time
+    RETHINK_TP_INERTIA,
+    RETHINK_TP_SPEED,
+    RETHINK_TP_DRIFT_TIME,
+    // The stick's: clicking by pressing the stick (0 or 1)
+    RETHINK_TP_PRESS_TO_SELECT,
+#if IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_SCROLL)
+    // Scrolling with the middle button held: stick counts per wheel step,
+    // sideways counts per report that don't scroll
+    RETHINK_TP_SCROLL_DIVISOR,
+    RETHINK_TP_SCROLL_DEAD_ZONE,
+#endif
+    RETHINK_TP_SETTINGS,
+};
 
-// The rate set, and the stick's present one (0 when not pointing)
-void rethink_tp_rate_get(int *set, int *now);
+struct rethink_tp_setting_info {
+    const char *name;
+    int def;
+    int min;
+    int max;
+    const char *help;
+};
 
-// Scrolling with the middle button held (CONFIG_RETHINK_TRACKPOINT_SCROLL):
-// stick counts per wheel step (1-255) and the sideways counts per report
-// that don't scroll (0-127), until the next reset. -EINVAL out of range.
-int rethink_tp_scroll_set(int divisor, int dead_zone);
-void rethink_tp_scroll_get(int *divisor, int *dead_zone);
+// Name, default, range and description; NULL past the last setting
+const struct rethink_tp_setting_info *rethink_tp_setting_info(enum rethink_tp_setting setting);
+
+int rethink_tp_setting_get(enum rethink_tp_setting setting);
+
+// Takes effect at once (the stick's while pointing: the thread pauses
+// streaming for it). -EINVAL out of range.
+int rethink_tp_setting_set(enum rethink_tp_setting setting, int value);
+
+// Every setting back to its default; the saved values are deleted
+void rethink_tp_settings_reset(void);
+
+// The stick's present report rate, 0 when not pointing
+int rethink_tp_rate_now(void);
 
 // While pointing: streaming off, the present X, Y and Z forces become the
 // zero point (E2 51, about 310 ms), streaming on. -ENODEV when not pointing.
@@ -91,7 +125,7 @@ struct rethink_tp_stats {
     uint32_t resyncs;   // packets dropped to find the next packet start
     uint32_t resent;    // packets with an error, sent again on request (0xFE)
     uint32_t lost;      // packets with an error that didn't come again
-    // Report rate changes while pointing: keys, moving and still
+    // Report rate or stick settings changed while pointing
     uint32_t rate_changes;
     uint32_t tx_bytes;  // sent and acknowledged
     uint32_t tx_timeouts;

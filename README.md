@@ -30,9 +30,9 @@ Next, in this order:
   - [x] Pointing: start at boot (self-test, ID, streaming on), packets to ZMK's pointing input. Tested on the T420: movement and its three buttons over USB and Bluetooth
   - [x] Reliable reception. With pointing in the shell build (debug logs over USB), wired: 2505 bytes without an error; over Bluetooth: 107 errors in 913 bytes (46 framing, 3 parity, 58 broken off; earlier 4 % in 4444). An interrupt delayed by more than one clock period (68 µs) misses a bit, and the Bluetooth controller's upper layer shared the GPIO interrupt's priority 1. With GPIOTE20 at priority 0 (`rethink_trackpoint.dtsi`): wired 13466 bytes without an error, Bluetooth 12 errors in 2673 bytes (0.45 %: 1 framing, 10 parity, 1 broken off), so now mostly a bit read late rather than an edge missed. A packet with an error is now asked for again (`fe`, TrackPoint specification 2.4.2), so a lost packet doesn't take a button change with it; `tp stat` counts them as sent again or lost. Tested over Bluetooth: 12 errors in 3729 bytes, 11 packets sent again, none lost. A command's reply lost the same way is asked for again too. If errors grow, receive through UARTE20 instead, where the hardware samples the bits: a PS/2 byte is UART 8O1 at the stick's clock (14.4 kBd is within 2 % of this stick's 14.7 kHz; the nRF54L has odd parity). Sending stays bit-banged: rare, and the stick clocks it. Also drop packets with the overflow bits set
   - [ ] Keys: Fn+F8 on/off, Ctrl+Fn+F8 recalibrate (`&tp`). Tested on the T420: off at once, on in 0.87 s; recalibrating does nothing while the stick is off. Report rate up and down on Shift+Fn+F8 and Ctrl+Shift+Fn+F8: tested, commented out in the keymaps. Untested: off after 10 minutes unused
-  - [x] Scrolling: middle button held while the stick moves sends the wheel instead of movement, vertical, and horizontal only past a dead zone. A middle click only if the button comes up without movement (see Scrolling in [Pointing stick](#pointing-stick-in-progress)). Tested on the T420: both axes; the defaults (20 counts per wheel step, sideways dead zone 2 counts per report) are fine, `tp scroll` tunes them
-  - [x] Smooth scrolling (`CONFIG_ZMK_POINTING_SMOOTH_SCROLLING`, the HID Resolution Multiplier): the wheel in sixteenths of a step, for hosts that set the multiplier; whole steps for others. In test; then the scrolling defaults again
-  - [ ] Sensitivity and smoothing: the stick's own settings (sensitivity, negative inertia, plateau speed, drift time, press-to-select; see the table in [Pointing stick](#pointing-stick-in-progress)), written after each start since a power cycle clears them, and ZMK input processors (scaling); kept in settings, changed with keys (later ZMK Studio)
+  - [x] Scrolling: middle button held while the stick moves sends the wheel instead of movement, vertical, and horizontal only past a dead zone. A middle click only if the button comes up without movement (see Scrolling in [Pointing stick](#pointing-stick-in-progress)). Tested on the T420: both axes; the defaults (20 counts per wheel step, sideways dead zone 2 counts per report) are fine, `tp set` tunes them
+  - [x] Smooth scrolling (`CONFIG_ZMK_POINTING_SMOOTH_SCROLLING`, the HID Resolution Multiplier): the wheel in sixteenths of a step, for hosts that set the multiplier; whole steps for others. Tested on the T420. Bug found: after the laptop slept, 16 times the scrolling (600 000 instead of 30 000 px/s) until the keyboard restarted: the multiplier the host had set stayed after it disconnected. Now reset when the host goes (`patches/zmk/0002`); untested
+  - [ ] Sensitivity and smoothing: the stick's own settings (sensitivity, negative inertia, plateau speed, drift time, press-to-select; see the table in [Pointing stick](#pointing-stick-in-progress)), the report rate and the scrolling numbers as settings: Kconfig defaults, `tp set`, kept in flash, the stick's written after each start since a power cycle clears them. Defaults sensitivity 192 (×1.5) and speed 150 (about 667 counts/s), press-to-select on Alt+Fn+F8. Tested: Alt+Fn+F8, the scroll divisor default (20). In test: the rest. Scroll speed is `scroll_divisor`; the sixteenths of a step are fixed by ZMK's HID descriptor (a finer multiplier would need a descriptor patch and new pairings, and the 80 reports/s limit smoothness more). ZMK's input processors (scaling) only if the stick's own sensitivity isn't enough
   - [ ] Power, see below
   - TP2 (FFC2) comes with `rethink_t480`
 - [ ] Pointing stick power. The stick path: the stick at 5 V, the charge pump doubling from 3.3 V (input current about twice the output), R14 and the PCA9306. The TrackPoint specification: the controller should average under 6 mA (25 mA peak); the sensor bridge is at least 350 Ω (up to 14.3 mA at 5 V) and is powered for each conversion (an op-amp power-up delay starts each one); the stick converts 80-120 times a second whatever the report rate, and sends packets only when something changes. Measured on a T420 over Bluetooth, on battery (shell build, USB unplugged), the stick still:
@@ -62,10 +62,10 @@ Next, in this order:
   | A key held (1 kHz scan with I2C, before the column skip above) | +1.2 mA | |
   | Caps Lock LED on (`rethink_t420`) | +1.9 mA | |
 
-  So a floor of about 1.5 mA comes from the Control Board and firmware, not the adapter or the matrix, and the radio adds little. In the USB log no connection-parameter update followed in 4 minutes (ZMK logs `interval N latency N` on one), so the host kept its own parameters. A tuned ZMK keyboard idles at tens to a few hundred µA, so about 1 mA is to be found. Next: a trace with a power profiler. Predictions, by what the trace would show:
+  So a floor of about 1.5 mA comes from the Control Board and firmware, not the adapter or the matrix, and the radio adds little. In the USB log no connection-parameter update followed in 4 minutes (ZMK logs `interval N latency N` on one), so the host kept its own parameters. `ble conn` (2026-11-10): both hosts chose 15 ms with latency 30, the longest of Zephyr's request, so the latency is honoured; asked for 7.5 ms, a host took it. A tuned ZMK keyboard idles at tens to a few hundred µA, so about 1 mA is to be found. Next: a trace with a power profiler. Predictions, by what the trace would show:
   - **Flat floor between radio events:** something stays on. Candidates: the USB controller and its regulator (`vregusb`, enabled in the board DT) without VBUS, the 32 MHz crystal held by a driver, or the CPU not sleeping. Check: a plain Zephyr BLE sample (`peripheral_hids`) on the same board. At ~1.5 mA too, it's the board or Zephyr; lower, it's ZMK or these modules.
   - **Spikes every 4 s:** calibration of the RC 32 kHz clock (`CONFIG_CLOCK_CONTROL_NRF_K32SRC_RC_CALIBRATION`). The board DT sets up the 32 kHz crystal (`lfxo`); if it's fitted, use it, which also narrows the radio's receive windows.
-  - **Radio events every 7.5-30 ms while connected:** the host ignores ZMK's request for latency 30; request again or accept other parameters.
+  - **Radio events every 15 ms while idle and connected:** the keyboard doesn't skip events, though the hosts granted latency 30 (`ble conn`); with it, an idle keyboard need only answer every 31st (465 ms).
   - **Advertising:** ZMK advertises every 30-60 ms for as long as no host is connected. Slow down after about 30 s (ZMK patch).
   - Then `CONFIG_ZMK_SLEEP`: System OFF after some minutes untouched on Bluetooth too, waking on a key (rows and INT as wake sources).
 - [ ] Backlight on a real keyboard (`rethink_t430`): current on BUCK1 (50 mA works, ~106 mA doesn't), `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY` (capped at 10 % until then), PWM frequency
@@ -73,6 +73,7 @@ Next, in this order:
 - [ ] Shields: `rethink_t480`, `rethink_l14`
 - [ ] Bluetooth: the T420 build doesn't pair with a Samsung TV (Windows and Android pair fine). Not looked into: the TV, ZMK, or the mouse in the HID descriptor since pointing
 - [ ] Self-test after programming, for user-built boards: check the adapter (I2C) and other parts at boot and report a fault without a serial log, e.g. a sequence of red blinks
+- [ ] To look into later: pinch zoom with the stick, as on a touchpad (smooth, without reflowing the page). As far as known, a mouse can't send it: Windows (Precision Touchpad) and Linux (libinput) make pinch gestures only from touchpads and touchscreens, two contacts moving apart; mice zoom with Ctrl and the wheel, or through their maker's software. The keyboard would have to report a touchpad (a HID digitizer) besides the mouse
 - [ ] ZMK Studio: change the keymap at runtime without rebuilding (swap Fn and LCtrl, Fn-layer and unused keys) and pick ISO or ANSI, which Studio offers when a shield defines both physical layouts. Needs key positions in each physical layout, an ANSI transform per keyboard (the T420 has one layout for both now, which ISO and ANSI layouts would map onto), a `&studio_unlock` key (ThinkVantage on the T420), spare layers, and Studio over USB (a CDC ACM port on the device_next stack, which the log and shell snippets use now) and Bluetooth
 
 ## Software stack
@@ -90,6 +91,7 @@ The patches from framework-cb (its README says what each one does) and from `pat
 | Patch | What it does |
 | --- | --- |
 | `zmk/0001-pointing-smooth-scrolling-for-hosts-without-the-multiplier.patch` | Smooth scrolling (`CONFIG_ZMK_POINTING_SMOOTH_SCROLLING`): the input listener divides the wheel's sixteenths by what the host's Resolution Multiplier leaves to do, but reported the undivided value; it now reports the divided one. And the multiplier now starts at 1, not 16, until the host sets it, so a host without Resolution Multiplier support (which never sets it) gets whole steps instead of 16 times the scrolling |
+| `zmk/0002-pointing-resolution-multiplier-back-to-1-when-the-host-goes.patch` | The multiplier a host set stayed for its Bluetooth profile or USB after it disconnected; a host back from sleep that didn't set it again then scrolled 16 times too far until a reboot. Now reset to 1 when the Bluetooth connection drops or USB is unplugged; a host with Resolution Multiplier support sets it again when it connects |
 
 ## Requirements (Windows)
 
@@ -301,7 +303,7 @@ ThinkPad L420 keyboard on FFC1 (30-pin matrix cable in J4). Mapped with `rethink
   | --- | --- |
   | Esc, F1 | Break, SysRq (Alt+PrtSc) |
   | F2, F4, F7 | Lock (Win+L), sleep, display (Win+P) |
-  | F8 | TrackPoint on/off; with Ctrl: recalibrate it (hands off the stick) |
+  | F8 | TrackPoint on/off; with Ctrl: recalibrate it (hands off the stick); with Alt: press-to-select (clicking by pressing the stick) on/off |
   | F9, F10, F11 | Scroll Lock, NmLk (embedded keypad on/off), Pause |
   | Insert, Delete, Home | PrtSc, brightness down, brightness up |
   | PgUp, PgDn | Browser back, forward |
@@ -327,7 +329,7 @@ ThinkPad T420 keyboard on the Mezzanine connector (2x20 pins). Mapped with `reth
   | --- | --- |
   | PrtSc, ScrLk, Pause | SysRq (Alt+PrtSc), NmLk (embedded keypad on/off), Break |
   | F2, F4, F7 | Lock (Win+L), sleep, display (Win+P) |
-  | F8 | TrackPoint on/off; with Ctrl: recalibrate it (hands off the stick) |
+  | F8 | TrackPoint on/off; with Ctrl: recalibrate it (hands off the stick); with Alt: press-to-select (clicking by pressing the stick) on/off |
   | Home, End | Brightness up, down |
   | Up, Down, Left, Right | Stop, play/pause, previous, next |
 
@@ -343,11 +345,12 @@ ThinkPad T420 keyboard on the Mezzanine connector (2x20 pins). Mapped with `reth
 
 - **Power:** TP_3V3 (P3.12), then the charge pump for a 5 V stick (`CONFIG_RETHINK_TP1_SUPPLY_5V`, JP6 1-2), all with the reset held. The reset (TP1_RST, active high, R14 pull-up to the stick's supply) is released 600 ms later, the power-on reset time of the TrackPoint specification.
 - **PS/2 link:** FW_CLK (P1.16) and FW_DAT (P1.15), through the PCA9306 for a 5 V stick. The stick clocks every bit (a T420 stick at about 14.7 kHz); an interrupt on each falling clock edge reads DATA or sets the next bit. The interrupt (GPIOTE20) runs at priority 0, beside the Bluetooth controller's lower layer, since at priority 1 the controller's upper layer delayed it by more than a clock period. A packet with a broken byte (framing, parity, or unfinished 1.2 ms after its start) is dropped, and the thread asks the stick to send it again (`fe`) before its next packet; so is a command's reply that doesn't come in time.
-- **Start:** self-test result `aa 00`, TrackPoint ID (`e1`, logged), the report rate (`f3`), streaming on (`f4`).
+- **Start:** self-test result `aa 00`, TrackPoint ID (`e1`, logged), the stick's settings (see Settings), the report rate (`f3`), streaming on (`f4`).
 - **Pointing:** 3-byte packets every 10 ms while the stick moves, assembled in the interrupt. A pause, or a byte lost to an error, starts the next packet afresh. Movement goes out as relative X/Y, the packet's left, right and middle buttons as mouse buttons 1-3 (the middle one: see Scrolling). The buttons are wired to the stick: the T420's under the space bar, the L420's through J5. Press-to-select (clicking by pressing the stick) is off on the T420 stick.
 - **Scrolling** (`CONFIG_RETHINK_TRACKPOINT_SCROLL`): while the middle button is held, movement turns into the wheel. Each report's stronger axis scrolls: vertically, or sideways only past a dead zone (`CONFIG_RETHINK_TRACKPOINT_SCROLL_H_DEAD_ZONE`, 2 counts per report, and only the excess), so a push up that leans a little doesn't scroll sideways. 20 stick counts make one wheel step (`CONFIG_RETHINK_TRACKPOINT_SCROLL_DIVISOR`; usually three lines), sent in sixteenths (smooth scrolling, `CONFIG_ZMK_POINTING_SMOOTH_SCROLLING`, on with scrolling) to a host that sets the HID Resolution Multiplier to 16, and in whole steps to others. Letting the middle button go clicks it only if the stick moved no more than 4 counts meanwhile, so the click comes on release. Middle-button drags are gone with it.
 - **Report rate:** 80/s (`CONFIG_RETHINK_TRACKPOINT_SAMPLE_RATE`), the cheapest measured (roadmap: Pointing stick power). The stick measures its force 80 times a second at 10-40 and 80/s, 120 at 60/s, 100 at 100 and 200/s (TrackPoint specification 2.4.6); at 200/s the T420 stick's packets still came 10 ms apart. Experimental (`CONFIG_RETHINK_TRACKPOINT_SLOW_IDLE`, off): after 2 s without movement the stick reports at 80/s until its next movement packet, which brings the set rate back: streaming off, `f3`, streaming on, about 10 ms without packets; for 60, 100 and 200/s. `tp stat` counts the changes.
-- **Keys:** `&tp TP_TOG` switches the stick on and off (`TP_ON`, `TP_OFF`), `&tp TP_RECAL` recalibrates it, `&tp TP_RATE_UP` and `TP_RATE_DN` step the report rate through 10, 20, 40, 60, 80, 100 and 200/s until the next reset (`dt-bindings/rethink/trackpoint.h`). Both keyboards have on/off and recalibrate on Fn+F8 and Ctrl+Fn+F8; the rate keys (Shift+Fn+F8, Ctrl+Shift+Fn+F8) are commented out in their keymaps. The stick's thread carries them out: starting takes about a second, recalibrating about 350 ms. The buttons go off with the stick.
+- **Settings** (`tp set`): the report rate, the stick's sensitivity, negative inertia, upper plateau speed, drift time and press-to-select (see the table below), and the scrolling numbers. Kconfig gives the defaults (`CONFIG_RETHINK_TRACKPOINT_*`); a changed setting is saved to flash 3 s after the last change and kept over resets and new firmware; one set back to its default is deleted from flash, so a new Kconfig default applies. The stick's own live in its RAM, which a power cycle clears: each start writes them, after a power-on only those that differ from the stick's power-on values (as Linux does). While pointing a change is written at once, with streaming off around it. Sticks other than IBM's (ID 01, the T420's) take only sensitivity and press-to-select.
+- **Keys:** `&tp TP_TOG` switches the stick on and off (`TP_ON`, `TP_OFF`), `&tp TP_RECAL` recalibrates it, `&tp TP_RATE_UP` and `TP_RATE_DN` step the report rate through 10, 20, 40, 60, 80, 100 and 200/s, kept like `tp set rate`, `&tp TP_PTS_TOG` switches press-to-select, kept like `tp set press_to_select` (`dt-bindings/rethink/trackpoint.h`). Both keyboards have on/off, recalibrate and press-to-select on Fn+F8, Ctrl+Fn+F8 and Alt+Fn+F8 (Alt alone reaches the host: on Windows it may open a menu bar); the rate keys (Shift+Fn+F8, Ctrl+Shift+Fn+F8) are commented out in their keymaps. The stick's thread carries them out: starting takes about a second, recalibrating about 350 ms. The buttons go off with the stick.
 - **Unused:** after `CONFIG_RETHINK_TRACKPOINT_IDLE_OFF_MIN` (10) minutes with neither the stick nor a key used, the stick is powered off; the next key press starts it again. A stick switched off with Fn+F8 stays off until Fn+F8.
 - **Calibration** is the stick's own (TrackPoint specification, section 2.2.3): the self-test sets the zero point, so the stick must not be touched in the second after power-on. Drift correction then resets it whenever the force stays within ±0.8 g for about half a second (hands off; `e2 81 5f` sets the time in 107 ms steps, default 5). A wrong zero, from a finger on the stick at power-on, so corrects itself once the stick is let go. `e2 51` (Ctrl+Fn+F8) sets the zero point to the present forces at once. The specification has the stick acknowledge only after the recalibration (about 310 ms); the T420 stick acknowledged after 2 ms, so the driver waits 350 ms either way before the next command.
 - **Bluetooth:** the keyboard now also describes a mouse. If the pointer doesn't move over Bluetooth, remove the keyboard on the computer and pair it again.
@@ -360,23 +363,24 @@ Build a keyboard with the shell, e.g. `.\build.ps1 -Shield rethink_t420 -Snippet
 | `tp off` | Powers it off |
 | `tp send <hex> [hex...]` | Sends bytes, showing each acknowledge (`fa`), then the reply. Pauses pointing and turns streaming off first (`f5`) |
 | `tp read [s]` | Shows what the stick sends, one line per packet with its time in ms (default 5 s). While pointing: the packets instead of reporting them, then pointing again |
-| `tp rate [n]` | Shows or sets the report rate (10, 20, 40, 60, 80, 100, 200), as the keys do |
-| `tp scroll [divisor [dead zone]]` | Shows or sets the scrolling numbers until the next reset: stick counts per wheel step, sideways counts per report that don't scroll. Also shows the resolution multiplier the present host has set (16: smooth scrolling, 1: whole steps) |
-| `tp stat [clear]` | Bytes and errors both ways, packets reported, sent again and lost, the report rate and its changes, the stick's clock period |
+| `tp set [name [value]]` | Lists the settings with their defaults and ranges (`*`: changed, in flash), shows one, or sets one; a name may be shortened while unique, values may be hex (`0x80`). `tp set defaults` puts all back and deletes them from flash |
+| `tp stat [clear]` | Bytes and errors both ways, packets reported, sent again and lost, the report rate and its changes, the wheel resolution multiplier the present host has set (16: smooth scrolling, 1: whole steps), the stick's clock period |
+
+`ble conn` shows each Bluetooth connection's interval (how often the host lets the keyboard send: a report waits at most one interval), peripheral latency and timeout; `ble conn <min> [max [latency]]` asks the host for another interval, in 1.25 ms units (6 = 7.5 ms, the shortest). The host decides; Zephyr asks for 7.5-15 ms, latency 30, 5 s after connecting (`CONFIG_BT_PERIPHERAL_PREF_*`). A browser's polling-rate test counts reports a second, which is the stick's report rate as long as the interval is shorter. Measured: the hosts chose 15 ms (66 a second), so the stick's 80 reports a second (12.5 ms apart) sometimes share an interval; `ble conn 6` got 7.5 ms from a host.
 
 Bytes to try: `e1` asks for the TrackPoint ID (`fa`, then the maker: 01 IBM/Lenovo, 02 ALPS, 03 Elan, 04 NXP, and its firmware), `f2` the PS/2 device ID (`fa 00`), `ff` resets (`fa aa 00`), `f4` starts streaming (3-byte packets while the stick moves, see `tp read`), `f5` stops it.
 
-The stick's own settings, from the [TrackPoint System Version 4.0 Engineering Specification](https://web.mit.edu/bbaren/Public/ykt3eext.pdf) (YKT3E; a T420 stick answers `e1` with 01 0e, the ID of that version). `e2 80 XX` reads a RAM location, `e2 81 XX YY` writes YY to it, `e2 47 XX MM` flips the bits MM of flag byte XX. The values survive `ff` but not a power cycle, so the driver will have to write them after each start.
+The stick's own settings, from the [TrackPoint System Version 4.0 Engineering Specification](https://web.mit.edu/bbaren/Public/ykt3eext.pdf) (YKT3E; a T420 stick answers `e1` with 01 0e, the ID of that version). `e2 80 XX` reads a RAM location, `e2 81 XX YY` writes YY to it, `e2 47 XX MM` flips the bits MM of flag byte XX. The values survive `ff` but not a power cycle, so the driver writes them after each start (Settings above: `tp set` names in the table).
 
-| Setting | Command | Default | Effect |
+| Setting (`tp set` name) | Command | Default (hex) | Effect |
 | --- | --- | --- | --- |
-| Sensitivity | `e2 81 4a XX` | 80 (×1.0) | Force scale before the transfer function, ×0 to ×1.99 |
-| Negative inertia | `e2 81 4d XX` | 06 | Boosts changes of force, damps the start of a movement; 0 off |
-| Upper plateau speed | `e2 81 60 XX` | 61 | Speed under a firm push, about 22 + 4.3 × XX counts/s (439 at the default) |
-| Sample rate | `f3 XX` | 64 (100/s) | Reports per second: 0a, 14, 28, 3c, 50, 64, c8 (10-200); force measured 80/s at 10-40 and 80, 120/s at 60, 100/s at 100 and 200. See Report rate above |
-| Drift time | `e2 81 5f XX` | 05 | Hands-off time before drift correction, in 107 ms steps |
+| Sensitivity (`sensitivity`) | `e2 81 4a XX` | 80 (×1.0) | Force scale before the transfer function, ×0 to ×1.99 |
+| Negative inertia (`inertia`) | `e2 81 4d XX` | 06 | Boosts changes of force, damps the start of a movement; 0 off |
+| Upper plateau speed (`speed`) | `e2 81 60 XX` | 61 | Speed under a firm push, about 22 + 4.3 × XX counts/s (439 at the default) |
+| Sample rate (`rate`) | `f3 XX` | 64 (100/s) | Reports per second: 0a, 14, 28, 3c, 50, 64, c8 (10-200); force measured 80/s at 10-40 and 80, 120/s at 60, 100/s at 100 and 200. See Report rate above |
+| Drift time (`drift_time`) | `e2 81 5f XX` | 05 | Hands-off time before drift correction, in 107 ms steps |
 | Drift correction off | `e2 47 23 80` | on | |
-| Press-to-select | `e2 47 2c 01` | off | Clicks by pressing the stick; thresholds and timing at `5c`, `5a`, `5e`, `5d`, `57`, `58`, `59` |
+| Press-to-select (`press_to_select`) | `e2 47 2c 01` | off | Clicks by pressing the stick; thresholds and timing at `5c`, `5a`, `5e`, `5d`, `57`, `58`, `59` |
 | Middle button blocked | `e2 47 23 01` | no | |
 | Axes | `e2 81 2c XX` | 00 | Bits 3-6: invert X, Y, Z, swap X and Y |
 | Sampling off | `e2 47 20 10` | on | No force conversions, no movement; the buttons still report. 5 mA less from the battery than 80/s on the T420 |
@@ -405,7 +409,7 @@ Measured on a T420 stick (ID 01, firmware 0e), pointing in the shell build: over
 │                                pointing stick and its key behavior, wired power-off
 ├── include/rethink/             Public API (adapter.h, expander.h, backlight.h, trackpoint.h)
 ├── include/dt-bindings/rethink/ Keymap constants (trackpoint.h: TP_OFF, TP_ON, TP_TOG, TP_RECAL,
-│                                TP_RATE_UP, TP_RATE_DN)
+│                                TP_RATE_UP, TP_RATE_DN, TP_PTS_TOG)
 ├── dts/bindings/                rethink,adapter-ctrl, rethink,pcal6416a, rethink,matrix,
 │                                rethink,backlight, rethink,trackpoint and
 │                                rethink,behavior-trackpoint
@@ -438,13 +442,19 @@ Measured on a T420 stick (ID 01, firmware 0e), pointing in the shell build: over
 | `CONFIG_RETHINK_BACKLIGHT` | if `rethink,backlight` in DT | Backlight power chain, PWM and interlock (use with `CONFIG_ZMK_BACKLIGHT`) |
 | `CONFIG_RETHINK_TRACKPOINT` | if `rethink,trackpoint` in DT | Pointing stick power, reset, PS/2 link and pointing |
 | `CONFIG_RETHINK_TRACKPOINT_IDLE_OFF_MIN` | 10 | Minutes with neither the stick nor a key used before the stick is powered off; 0 = never |
-| `CONFIG_RETHINK_TRACKPOINT_SAMPLE_RATE` | 80 | Reports per second (10, 20, 40, 60, 80, 100, 200); keys and `tp rate` change it until the next reset |
+| `CONFIG_RETHINK_TRACKPOINT_SAMPLE_RATE` | 80 | Reports per second (10, 20, 40, 60, 80, 100, 200); `tp set rate` and the keys change it (kept in flash) |
 | `CONFIG_RETHINK_TRACKPOINT_SLOW_IDLE` | n | Experimental: 80 reports/s after 2 s without movement, the set rate from the next movement packet |
+| `CONFIG_RETHINK_TRACKPOINT_SENSITIVITY` | 192 | The stick's force scale (×1.5; 128 = ×1.0, its power-on value); `tp set sensitivity` |
+| `CONFIG_RETHINK_TRACKPOINT_NEG_INERTIA` | 6 | The stick's negative inertia, 0 off; `tp set inertia` |
+| `CONFIG_RETHINK_TRACKPOINT_SPEED` | 150 | The stick's upper plateau speed (about 667 counts/s; power-on 97, 439 counts/s); `tp set speed` |
+| `CONFIG_RETHINK_TRACKPOINT_DRIFT_TIME` | 5 | Hands-off time before drift correction, 107 ms steps; `tp set drift_time` |
+| `CONFIG_RETHINK_TRACKPOINT_PRESS_TO_SELECT` | n | Pressing the stick clicks; `tp set press_to_select` |
 | `CONFIG_RETHINK_TRACKPOINT_SCROLL` | y | Middle button held: the stick scrolls; the middle button clicks only without movement |
-| `CONFIG_RETHINK_TRACKPOINT_SCROLL_DIVISOR` | 20 | Stick counts per wheel step |
-| `CONFIG_RETHINK_TRACKPOINT_SCROLL_H_DEAD_ZONE` | 2 | Sideways counts per report that don't scroll |
+| `CONFIG_RETHINK_TRACKPOINT_SCROLL_DIVISOR` | 20 | Stick counts per wheel step; `tp set scroll_divisor` |
+| `CONFIG_RETHINK_TRACKPOINT_SCROLL_H_DEAD_ZONE` | 2 | Sideways counts per report that don't scroll; `tp set scroll_dead_zone` |
 | `CONFIG_ZMK_POINTING_SMOOTH_SCROLLING` (ZMK's) | y with scrolling | The wheel in sixteenths of a step for hosts that set the HID Resolution Multiplier |
 | `CONFIG_RETHINK_TRACKPOINT_SHELL` | y with a shell | `tp` shell commands |
+| `CONFIG_RETHINK_BLE_SHELL` | y with a shell | `ble conn`: the Bluetooth connection interval |
 
 Hardware options: see [Hardware options](#hardware-options).
 

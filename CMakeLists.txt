@@ -35,6 +35,10 @@ if(CONFIG_RETHINK_TRACKPOINT_SHELL)
   target_sources(app PRIVATE src/trackpoint_shell.c)
 endif()
 
+if(CONFIG_RETHINK_BLE_SHELL)
+  target_sources(app PRIVATE src/ble_shell.c)
+endif()
+
 if(CONFIG_RETHINK_BACKLIGHT)
   target_sources(app PRIVATE src/backlight.c)
 endif()
