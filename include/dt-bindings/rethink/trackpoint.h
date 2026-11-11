@@ -16,8 +16,9 @@
 #define TP_TOG 2
 // The present forces become the zero point (E2 51): hands off the stick
 #define TP_RECAL 3
-// Report rate one step up or down: 10, 20, 40, 60, 80, 100, 200 a second.
-// Kept in flash, like the setting.
+// Report rate one step up or down: 10, 20, 40, 60, 80, 100, 200 a second;
+// the battery rate, or the USB one while USB powers the keyboard. Kept in
+// flash, like the setting.
 #define TP_RATE_UP 4
 #define TP_RATE_DN 5
 // Press-to-select (clicking by pressing the stick) on or off, kept in flash

@@ -39,6 +39,10 @@ if(CONFIG_RETHINK_BLE_SHELL)
   target_sources(app PRIVATE src/ble_shell.c)
 endif()
 
+if(CONFIG_RETHINK_RESET_DIAG)
+  target_sources(app PRIVATE src/reset_diag.c)
+endif()
+
 if(CONFIG_RETHINK_BACKLIGHT)
   target_sources(app PRIVATE src/backlight.c)
 endif()

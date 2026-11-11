@@ -6,4 +6,9 @@ if SHIELD_RETHINK_HW_TESTER
 config ZMK_KEYBOARD_NAME
     default "ReThink HW Test"
 
+# Triple-tap the pairing button to try the backlight chain without a
+# backlit keyboard
+config RETHINK_BACKLIGHT_TAP_UNLOCK
+    default y
+
 endif # SHIELD_RETHINK_HW_TESTER

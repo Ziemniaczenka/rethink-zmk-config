@@ -41,7 +41,9 @@ properties:
 
   reset-ms:
     type: int
-    default: 600
+    default: 20
     description: |
       Time the reset is held after power is applied. The TrackPoint
-      specification times its power-on reset at 600 ms +-20 %.
+      specification times its power-on reset at 600 ms +-20 %, but the
+      T420 stick only needs its supply up: after 20 ms it answered its
+      self-test 255 ms after the reset, as after 600 ms.

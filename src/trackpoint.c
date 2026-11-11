@@ -30,11 +30,12 @@
 // again whenever the force stays constant for 0.53 s (hands off: drift
 // correction). E2 51 sets it to the present forces on request.
 //
-// Settings (report rate, the stick's sensitivity and the like, scrolling)
-// have Kconfig defaults and are kept in flash once changed. The stick's own
-// live in its RAM (E2 80/81 read and write a location): they survive a reset
-// command but not a power cycle, so each start writes them, after a power-on
-// only those that differ from the stick's power-on values (as Linux does).
+// Settings (report rates on battery and with USB power, the stick's
+// sensitivity and the like, scrolling) have Kconfig defaults and are kept in
+// flash once changed. The stick's own live in its RAM (E2 80/81 read and
+// write a location): they survive a reset command but not a power cycle, so
+// each start writes them, after a power-on only those that differ from the
+// stick's power-on values (as Linux does).
 
 #define DT_DRV_COMPAT rethink_trackpoint
 
@@ -52,6 +53,11 @@
 
 #include <zmk/event_manager.h>
 #include <zmk/events/position_state_changed.h>
+
+#if IS_ENABLED(CONFIG_ZMK_USB)
+#include <zmk/events/usb_conn_state_changed.h>
+#include <zmk/usb.h>
+#endif
 
 #include <dt-bindings/rethink/trackpoint.h>
 #include <rethink/adapter.h>
@@ -120,9 +126,11 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1, "Exactly one rethink,t
 // Report rates (F3 XX)
 static const uint8_t rates[] = {10, 20, 40, 60, 80, 100, 200};
 
+#define VALID_RATE(r)                                                                              \
+    ((r) == 10 || (r) == 20 || (r) == 40 || (r) == 60 || (r) == 80 || (r) == 100 || (r) == 200)
 #define RATE CONFIG_RETHINK_TRACKPOINT_SAMPLE_RATE
-BUILD_ASSERT(RATE == 10 || RATE == 20 || RATE == 40 || RATE == 60 || RATE == 80 || RATE == 100 ||
-                 RATE == 200,
+#define RATE_USB CONFIG_RETHINK_TRACKPOINT_SAMPLE_RATE_USB
+BUILD_ASSERT(VALID_RATE(RATE) && VALID_RATE(RATE_USB),
              "PS/2 sample rates: 10, 20, 40, 60, 80, 100, 200");
 
 // Force measurements a second at a report rate (TrackPoint specification
@@ -197,7 +205,9 @@ static uint32_t last_move;
 #define SCROLL IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_SCROLL)
 
 static const struct rethink_tp_setting_info infos[] = {
-    [RETHINK_TP_RATE] = {"rate", RATE, 10, 200, "reports per second: 10, 20, 40, 60, 80, 100, 200"},
+    [RETHINK_TP_RATE] = {"rate", RATE, 10, 200,
+                         "reports per second on battery: 10, 20, 40, 60, 80, 100, 200"},
+    [RETHINK_TP_RATE_USB] = {"rate_usb", RATE_USB, 10, 200, "reports per second with USB power"},
     [RETHINK_TP_SENSITIVITY] = {"sensitivity", CONFIG_RETHINK_TRACKPOINT_SENSITIVITY, 0, 255,
                                 "force scale, 128 = x1.0"},
     [RETHINK_TP_INERTIA] = {"inertia", CONFIG_RETHINK_TRACKPOINT_NEG_INERTIA, 0, 255,
@@ -209,6 +219,8 @@ static const struct rethink_tp_setting_info infos[] = {
     [RETHINK_TP_PRESS_TO_SELECT] = {"press_to_select",
                                     IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_PRESS_TO_SELECT), 0, 1,
                                     "pressing the stick clicks"},
+    [RETHINK_TP_RESET_MS] = {"reset_ms", DT_INST_PROP(0, reset_ms), 1, 1000,
+                             "reset held after power-on, ms (specification: 600)"},
 #if SCROLL
     [RETHINK_TP_SCROLL_DIVISOR] = {"scroll_divisor", CONFIG_RETHINK_TRACKPOINT_SCROLL_DIVISOR, 1,
                                    255, "stick counts per wheel step"},
@@ -221,12 +233,14 @@ BUILD_ASSERT(ARRAY_SIZE(infos) == RETHINK_TP_SETTINGS);
 
 static atomic_t values[] = {
     [RETHINK_TP_RATE] = ATOMIC_INIT(RATE),
+    [RETHINK_TP_RATE_USB] = ATOMIC_INIT(RATE_USB),
     [RETHINK_TP_SENSITIVITY] = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SENSITIVITY),
     [RETHINK_TP_INERTIA] = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_NEG_INERTIA),
     [RETHINK_TP_SPEED] = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SPEED),
     [RETHINK_TP_DRIFT_TIME] = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_DRIFT_TIME),
     [RETHINK_TP_PRESS_TO_SELECT] =
         ATOMIC_INIT(IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_PRESS_TO_SELECT)),
+    [RETHINK_TP_RESET_MS] = ATOMIC_INIT(DT_INST_PROP(0, reset_ms)),
 #if SCROLL
     [RETHINK_TP_SCROLL_DIVISOR] = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SCROLL_DIVISOR),
     [RETHINK_TP_SCROLL_DEAD_ZONE] = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SCROLL_H_DEAD_ZONE),
@@ -270,6 +284,9 @@ static K_MUTEX_DEFINE(start_lock);
 
 static struct rethink_tp_stats stats;
 static bool powered;
+// Uptime (ms) when the last reset ended (pin released, or reset command
+// acknowledged); the self-test result follows it
+static int64_t reset_end;
 
 static atomic_t requests;
 static struct k_poll_signal request_signal = K_POLL_SIGNAL_INITIALIZER(request_signal);
@@ -512,7 +529,7 @@ int rethink_tp_power_on(void) {
     }
 
     memset(&stats, 0, sizeof(stats));
-    k_msleep(DT_INST_PROP(0, reset_ms));
+    k_msleep(setting(RETHINK_TP_RESET_MS));
 
     // Listening before the reset ends: the self-test result follows it
     err = link_start();
@@ -523,6 +540,7 @@ int rethink_tp_power_on(void) {
         rethink_tp_power_off();
         return err;
     }
+    reset_end = k_uptime_get();
 
     LOG_INF("Pointing stick on (%s, %s)", TP2 ? "TP2" : "TP1", NEEDS_PUMP ? "5 V" : "3.3 V");
     return 0;
@@ -822,21 +840,33 @@ static void note_rate(uint8_t rate) {
     packet_gap_us = MIN(PACKET_GAP_US, 500000 / rate);
 }
 
+// The rate setting in effect: with USB power the stick's current costs no
+// battery
+static enum rethink_tp_setting rate_setting(void) {
+#if IS_ENABLED(CONFIG_ZMK_USB)
+    if (zmk_usb_is_powered()) {
+        return RETHINK_TP_RATE_USB;
+    }
+#endif
+    return RETHINK_TP_RATE;
+}
+
 // A rate that measures the force more than 80 times a second drops to 80/s
 // while the stick is still
 static bool slow_idle(void) {
     return IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_SLOW_IDLE) &&
-           conversions(setting(RETHINK_TP_RATE)) > conversions(IDLE_RATE);
+           conversions(setting(rate_setting())) > conversions(IDLE_RATE);
 }
 
 static uint32_t still_ms(void) { return k_uptime_get_32() - last_move; }
 
 // The chosen rate, or IDLE_RATE once the stick is still
 static uint8_t rate_wanted(void) {
-    return slow_idle() && still_ms() >= SLOW_IDLE_MS ? IDLE_RATE : setting(RETHINK_TP_RATE);
+    return slow_idle() && still_ms() >= SLOW_IDLE_MS ? IDLE_RATE : setting(rate_setting());
 }
 
 static int start_locked(void) {
+    int64_t begin = k_uptime_get();
     uint8_t reply[2];
     int err = 0;
 
@@ -844,9 +874,13 @@ static int start_locked(void) {
 
     // A powered stick gets the reset command; one that doesn't answer it (E2
     // 44 powered it down, say) a power cycle, which resets it with its pin
-    if (powered && command(PS2_RESET) != 0) {
-        LOG_INF("No answer to the reset command: power cycle");
-        rethink_tp_power_off();
+    if (powered) {
+        if (command(PS2_RESET) == 0) {
+            reset_end = k_uptime_get();
+        } else {
+            LOG_INF("No answer to the reset command: power cycle");
+            rethink_tp_power_off();
+        }
     }
     // Its RAM settings at their power-on values; a reset command keeps them
     bool power_on = !powered;
@@ -860,6 +894,8 @@ static int start_locked(void) {
     if (!err) {
         err = read_reply(reply, sizeof(reply), SELF_TEST_TIMEOUT);
     }
+    int32_t self_test_ms = k_uptime_get() - reset_end;
+
     if (!err && (reply[0] != PS2_SELF_TEST_OK || reply[1] != 0x00)) {
         LOG_ERR("Self-test failed: %02x %02x", reply[0], reply[1]);
         err = -EIO;
@@ -906,7 +942,12 @@ static int start_locked(void) {
     pkt_len = 0;
     pointing = true;
     note_use();
-    LOG_INF("Pointing");
+
+    stats.start_ms = k_uptime_get() - begin;
+    stats.reset_ms = power_on ? setting(RETHINK_TP_RESET_MS) : 0;
+    stats.self_test_ms = self_test_ms;
+    LOG_INF("Pointing, %u ms after %s (self-test %u ms after the reset)", stats.start_ms,
+            power_on ? "power-on" : "the reset command", stats.self_test_ms);
     return 0;
 }
 
@@ -998,7 +1039,7 @@ static bool setting_valid(enum rethink_tp_setting s, int value) {
     if (s >= RETHINK_TP_SETTINGS || value < infos[s].min || value > infos[s].max) {
         return false;
     }
-    if (s != RETHINK_TP_RATE) {
+    if (s != RETHINK_TP_RATE && s != RETHINK_TP_RATE_USB) {
         return true;
     }
     for (size_t i = 0; i < ARRAY_SIZE(rates); i++) {
@@ -1096,15 +1137,16 @@ int rethink_tp_setting_set(enum rethink_tp_setting s, int value) {
     }
 
     save_later(BIT(s));
-    if (s == RETHINK_TP_RATE) {
-        LOG_INF("%d reports/s%s", value, slow_idle() ? ", 80 while still" : "");
+    if (s == RETHINK_TP_RATE || s == RETHINK_TP_RATE_USB) {
+        LOG_INF("%d reports/s %s%s", value, s == RETHINK_TP_RATE ? "on battery" : "with USB power",
+                slow_idle() ? ", 80 while still" : "");
     } else {
         LOG_INF("%s %d", infos[s].name, value);
     }
     if (stick_setting(s)) {
         atomic_set(&stick_changed, 1);
     }
-    if (s == RETHINK_TP_RATE || stick_setting(s)) {
+    if (s == RETHINK_TP_RATE || s == RETHINK_TP_RATE_USB || stick_setting(s)) {
         post_request(REQ_CONFIG);
     }
     return 0;
@@ -1118,14 +1160,14 @@ void rethink_tp_settings_reset(void) {
     save_later(BIT_MASK(RETHINK_TP_SETTINGS));
 }
 
-// One step along rates[], stopping at either end
+// One step along rates[] for the rate in effect, stopping at either end
 static int rate_step(int step) {
-    int rate = setting(RETHINK_TP_RATE);
+    enum rethink_tp_setting s = rate_setting();
+    int rate = setting(s);
 
     for (int i = 0; i < (int)ARRAY_SIZE(rates); i++) {
         if (rates[i] == rate) {
-            return rethink_tp_setting_set(RETHINK_TP_RATE,
-                                          rates[CLAMP(i + step, 0, (int)ARRAY_SIZE(rates) - 1)]);
+            return rethink_tp_setting_set(s, rates[CLAMP(i + step, 0, (int)ARRAY_SIZE(rates) - 1)]);
         }
     }
     return -EINVAL;
@@ -1374,9 +1416,11 @@ static void tp_thread(void *p1, void *p2, void *p3) {
     }
 }
 
+#if IDLE_OFF_MS > 0 || IS_ENABLED(CONFIG_ZMK_USB)
+// Key presses count as use, and wake a stick powered off for lack of it.
+// USB power coming or going may change the rate.
+static int tp_listener(const zmk_event_t *eh) {
 #if IDLE_OFF_MS > 0
-// Key presses count as use, and wake a stick powered off for lack of it
-static int key_listener(const zmk_event_t *eh) {
     const struct zmk_position_state_changed *ev = as_zmk_position_state_changed(eh);
 
     if (ev && ev->state) {
@@ -1385,11 +1429,22 @@ static int key_listener(const zmk_event_t *eh) {
             rethink_tp_request(REQ_WAKE);
         }
     }
+#endif
+#if IS_ENABLED(CONFIG_ZMK_USB)
+    if (as_zmk_usb_conn_state_changed(eh)) {
+        post_request(REQ_CONFIG);
+    }
+#endif
     return ZMK_EV_EVENT_BUBBLE;
 }
 
-ZMK_LISTENER(rethink_trackpoint, key_listener);
+ZMK_LISTENER(rethink_trackpoint, tp_listener);
+#if IDLE_OFF_MS > 0
 ZMK_SUBSCRIPTION(rethink_trackpoint, zmk_position_state_changed);
+#endif
+#if IS_ENABLED(CONFIG_ZMK_USB)
+ZMK_SUBSCRIPTION(rethink_trackpoint, zmk_usb_conn_state_changed);
+#endif
 #endif
 
 K_THREAD_DEFINE(rethink_tp_thread, CONFIG_RETHINK_TRACKPOINT_THREAD_STACK_SIZE, tp_thread, NULL,

@@ -143,7 +143,8 @@ config RETHINK_PAIRING_BUTTON
 	help
 	  Tap: next Bluetooth profile. Hold, then release: clear the active
 	  profile's bond. Both only while Bluetooth is on (mode switch).
-	  Triple tap: unlock the backlight (RETHINK_BACKLIGHT). Long hold:
+	  Triple tap: unlock the backlight (RETHINK_BACKLIGHT_TAP_UNLOCK, on
+	  the hardware tester only). Long hold:
 	  reboot into MCUboot USB recovery.
 	  Reads Framework's pairing_button gpio-keys node, outside the key
 	  matrix. Holding it while plugging in USB still enters MCUboot recovery.
@@ -168,11 +169,14 @@ config RETHINK_PAIRING_BUTTON_RECOVERY_MS
 	  cycle), otherwise a soft reset.
 
 config RETHINK_PAIRING_BUTTON_TAP_WINDOW_MS
-	int "Maximum gap between taps of a multi-tap (ms)"
-	default 400
+	int "Maximum gap between taps of a multi-tap (ms, 0 = taps act at once)"
+	default 400 if RETHINK_BACKLIGHT_TAP_UNLOCK
+	default 0
 	depends on RETHINK_PAIRING_BUTTON
 	help
 	  A single tap acts after this delay, once no second tap followed.
+	  The only multi-tap is the triple tap of RETHINK_BACKLIGHT_TAP_UNLOCK;
+	  without it a tap acts at once.
 
 config RETHINK_PROFILE_LEDS
 	bool "Show the active Bluetooth profile on the white LEDs"
@@ -317,18 +321,27 @@ config RETHINK_TRACKPOINT_IDLE_OFF_MIN
 	help
 	  Neither the stick nor a key used for this long: the stick is powered
 	  off (about 19 mA from the battery with a 5 V T420 stick). The next
-	  key press starts it again, which takes about a second. 0 keeps it
+	  key press starts it again, in about 0.3 s. 0 keeps it
 	  on. &tp TP_OFF switches it off until &tp TP_ON.
 
 config RETHINK_TRACKPOINT_SAMPLE_RATE
-	int "Reports per second"
+	int "Reports per second on battery"
 	default 80
 	help
 	  PS/2 sample rate: 10, 20, 40, 60, 80, 100 or 200. Battery current
 	  with a T420 stick, still: 19.1 mA at 40 and 80/s, 20.3 at 10 and
 	  20/s, 20.5 at 100 and 200/s, 21.7 at 60/s. At 200/s its packets
-	  still came 10 ms apart. "tp set rate" and &tp TP_RATE_UP/TP_RATE_DN
-	  change it; the new rate is kept in flash.
+	  still came 10 ms apart. "tp set rate" and, without USB power,
+	  &tp TP_RATE_UP/TP_RATE_DN change it; the new rate is kept in flash.
+
+config RETHINK_TRACKPOINT_SAMPLE_RATE_USB
+	int "Reports per second with USB power"
+	default 100
+	help
+	  The rate while USB powers the keyboard, where the stick's current
+	  costs no battery. 100/s pointed better than 80/s on the T420, and
+	  its stick sent no more at 200/s. "tp set rate_usb" and, with USB
+	  power, &tp TP_RATE_UP/TP_RATE_DN change it.
 
 config RETHINK_TRACKPOINT_SLOW_IDLE
 	bool "80 reports per second while the stick is still (experimental)"
@@ -450,8 +463,28 @@ config RETHINK_BLE_SHELL
 	depends on SHELL && ZMK_BLE
 	help
 	  "ble conn" shows the Bluetooth connection interval the host chose and
-	  asks it for another. The rethink-usb-shell snippet provides the
-	  shell.
+	  asks it for another. "ble log" shows the connections since boot
+	  (disconnect reasons, encryption, parameters, USB power), after the
+	  last reset's cause and record (RETHINK_RESET_DIAG); each event is
+	  also logged as rethink_ble. The rethink-usb-shell snippet provides
+	  the shell.
+
+config RETHINK_RESET_DIAG
+	bool "Record a crash or stall for after the reset"
+	default y
+	depends on SHELL
+	depends on $(dt_nodelabel_enabled,cpuapp_sram)
+	select REBOOT
+	select THREAD_NAME
+	select THREAD_STACK_INFO
+	help
+	  Reads and clears the reset cause (hwinfo) at boot. Before a reset it
+	  records, in the last 256 bytes of RAM, a fatal error (thread, pc,
+	  lr, code addresses on its stack; then reboots at once instead of
+	  halting until the watchdog) or a stall of the system work queue,
+	  which feeds the watchdog (what it waits on, the thread running
+	  instead, code addresses on both stacks). "ble log" shows them. A
+	  timer checks the work queue twice a second.
 
 DT_COMPAT_RETHINK_BACKLIGHT := rethink,backlight
 
@@ -464,6 +497,14 @@ config RETHINK_BACKLIGHT
 	select REGULATOR
 
 if RETHINK_BACKLIGHT
+
+config RETHINK_BACKLIGHT_TAP_UNLOCK
+	bool "Triple tap of the pairing button unlocks the backlight"
+	depends on RETHINK_PAIRING_BUTTON
+	help
+	  For the hardware tester, to try the backlight power chain without a
+	  backlit keyboard: bypasses KBD_BL_DTCT until reboot. Keyboards leave
+	  it off, so only a detected backlit keyboard unlocks the backlight.
 
 config RETHINK_BACKLIGHT_INIT_PRIORITY
 	int "Init priority"

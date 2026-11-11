@@ -20,3 +20,9 @@ config ZMK_POINTING
 # Resolution Multiplier (patches/zmk/0001-*)
 config ZMK_POINTING_SMOOTH_SCROLLING
     default RETHINK_TRACKPOINT_SCROLL
+
+# The Bluetooth RX work queue runs the connection callbacks (ZMK's, the log,
+# pairing data to flash). Zephyr's 1200 bytes were used up entirely ("kernel
+# thread stacks" on the T420 shell build, 2026-11-10)
+config BT_RX_STACK_SIZE
+    default 2048

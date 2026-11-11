@@ -244,8 +244,19 @@ static int cmd_stat(const struct shell *sh, size_t argc, char **argv) {
     int now = rethink_tp_rate_now();
 
     if (now) {
-        shell_print(sh, "Rate: %d/s set, %d/s now; %u changes of rate or settings",
-                    rethink_tp_setting_get(RETHINK_TP_RATE), now, s.rate_changes);
+        shell_print(sh, "Rate: %d/s now; set %d/s on battery, %d/s with USB power; %u changes of "
+                        "rate or settings",
+                    now, rethink_tp_setting_get(RETHINK_TP_RATE),
+                    rethink_tp_setting_get(RETHINK_TP_RATE_USB), s.rate_changes);
+    }
+    if (s.start_ms) {
+        if (s.reset_ms) {
+            shell_print(sh, "Last start: %u ms from power-on (reset held %u ms, self-test %u ms)",
+                        s.start_ms, s.reset_ms, s.self_test_ms);
+        } else {
+            shell_print(sh, "Last start: %u ms from the reset command (self-test %u ms)",
+                        s.start_ms, s.self_test_ms);
+        }
     }
 #if IS_ENABLED(CONFIG_ZMK_POINTING_SMOOTH_SCROLLING)
     // 16 once a host with smooth scrolling has set it, 1 otherwise
@@ -280,9 +291,10 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
                   "[seconds]: show what the stick sends (default 5); while pointing, the packets",
                   cmd_read, 1, 1),
     SHELL_CMD_ARG(set, NULL,
-                  "[name [value]] | defaults: rate, the stick's settings, scrolling; saved",
+                  "[name [value]] | defaults: rates, the stick's settings, scrolling; saved",
                   cmd_set, 1, 2),
-    SHELL_CMD_ARG(stat, NULL, "[clear]: link counters, rate, clock period", cmd_stat, 1, 1),
+    SHELL_CMD_ARG(stat, NULL, "[clear]: link counters, rate, last start, clock period", cmd_stat,
+                  1, 1),
     SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(tp, &tp_cmds, "Pointing stick (PS/2) by hand", NULL);

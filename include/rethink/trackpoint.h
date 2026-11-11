@@ -49,9 +49,11 @@ int rethink_tp_request(uint32_t cmd);
 // (saved a few seconds after the last change). The thread writes the stick's
 // own to it after each start, and while pointing as they change.
 enum rethink_tp_setting {
-    // Reports per second (PS/2 sample rate): 10, 20, 40, 60, 80, 100 or 200.
-    // With CONFIG_RETHINK_TRACKPOINT_SLOW_IDLE 80/s while the stick is still.
+    // Reports per second (PS/2 sample rate): 10, 20, 40, 60, 80, 100 or 200,
+    // on battery and with USB power. With CONFIG_RETHINK_TRACKPOINT_SLOW_IDLE
+    // 80/s while the stick is still.
     RETHINK_TP_RATE,
+    RETHINK_TP_RATE_USB,
     // The stick's: force scale (128 = x1.0)
     RETHINK_TP_SENSITIVITY,
     // The stick's, IBM sticks only: negative inertia, upper plateau speed,
@@ -61,6 +63,8 @@ enum rethink_tp_setting {
     RETHINK_TP_DRIFT_TIME,
     // The stick's: clicking by pressing the stick (0 or 1)
     RETHINK_TP_PRESS_TO_SELECT,
+    // Milliseconds the reset is held after power-on
+    RETHINK_TP_RESET_MS,
 #if IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_SCROLL)
     // Scrolling with the middle button held: stick counts per wheel step,
     // sideways counts per report that don't scroll
@@ -133,6 +137,12 @@ struct rethink_tp_stats {
     uint16_t period_us; // clock period of the last received byte
     uint16_t period_min_us;
     uint16_t period_max_us;
+    // The last start: from power-on or the reset command to pointing, the
+    // reset held after power-on (0 for a reset command), from the reset to
+    // the self-test result
+    uint16_t start_ms;
+    uint16_t reset_ms;
+    uint16_t self_test_ms;
 };
 
 void rethink_tp_stats_get(struct rethink_tp_stats *stats);

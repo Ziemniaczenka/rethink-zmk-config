@@ -122,9 +122,10 @@ static int apply(const struct device *dev) {
         want = false;
     } else if (want && !data->powered && !data->unlocked && !detected()) {
         if (!data->warned) {
-            LOG_WRN("Backlight locked: backlit keyboard %s. Triple-press the pairing button "
-                    "to unlock until reboot.",
-                    detect_name());
+            LOG_WRN("Backlight locked: backlit keyboard %s.%s", detect_name(),
+                    IS_ENABLED(CONFIG_RETHINK_BACKLIGHT_TAP_UNLOCK)
+                        ? " Triple-press the pairing button to unlock until reboot."
+                        : "");
             data->warned = true;
         }
         want = false;

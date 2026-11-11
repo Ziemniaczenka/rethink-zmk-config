@@ -17,7 +17,8 @@
 #   CMAKE_ARGS extra arguments passed to CMake
 #   FRAMEWORK_CB_LOCAL set when a local framework-cb is mounted (no west update)
 #
-# Outputs out/<ARTIFACT>.signed.bin in the repository.
+# Outputs out/<ARTIFACT>.signed.bin and its out/<ARTIFACT>.elf in the
+# repository.
 
 set -euo pipefail
 
@@ -107,6 +108,8 @@ build() {
     [ -f "$image" ] || die "build finished but $image is missing"
     mkdir -p "$REPO/out"
     cp "$image" "$REPO/out/$ARTIFACT.signed.bin"
+    # For addr2line on the addresses of a crash record (ble log)
+    cp "$BUILD_DIR/zephyr/zmk.elf" "$REPO/out/$ARTIFACT.elf"
     echo
     echo "Signed image: out/$ARTIFACT.signed.bin"
 }

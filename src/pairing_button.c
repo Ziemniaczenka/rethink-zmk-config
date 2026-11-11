@@ -97,7 +97,7 @@ static void taps_done(struct k_work *work) {
             zmk_ble_prof_next();
         }
         break;
-#if IS_ENABLED(CONFIG_RETHINK_BACKLIGHT)
+#if IS_ENABLED(CONFIG_RETHINK_BACKLIGHT_TAP_UNLOCK)
     case 3:
         LOG_INF("Pairing button triple-tapped: unlocking backlight");
         rethink_backlight_unlock();
