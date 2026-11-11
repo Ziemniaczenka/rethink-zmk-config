@@ -211,8 +211,10 @@ config RETHINK_CONNECTED_LED_TIMEOUT_MS
 	default 3000
 	depends on RETHINK_CONNECTED_LED
 
-config RETHINK_WIRED_OFF
-	bool "Power off in wired mode while USB is unplugged"
+RETHINK_DT_CHOSEN_BATTERY := zmk,battery
+
+config RETHINK_POWER
+	bool "Power off: wired mode without USB, low battery, unused"
 	default y
 	depends on ZMK_USB
 	depends on $(dt_nodelabel_enabled,protocol_switch)
@@ -221,6 +223,41 @@ config RETHINK_WIRED_OFF
 	select INPUT_GPIO_KEYS
 	select POWEROFF
 	select PM_DEVICE
+	help
+	  rethink_power_off(): System OFF with the stick, the adapter, the
+	  backlight and the LEDs off. USB power always wakes the board. Used by
+	  RETHINK_WIRED_OFF, RETHINK_LOW_BATTERY_OFF_MV and
+	  RETHINK_IDLE_SLEEP_MIN; "power" shell commands.
+
+if RETHINK_POWER
+
+config RETHINK_LOW_BATTERY_OFF_MV
+	int "Power off on battery below this voltage (mV, 0 = never)"
+	default 3300
+	range 0 4500
+	depends on SENSOR
+	depends on $(dt_chosen_enabled,$(RETHINK_DT_CHOSEN_BATTERY))
+	help
+	  Three readings 10 s apart under it, without USB power: System OFF,
+	  which only USB ends. Keeps the Li-ion cell from running flat (a few
+	  percent is left at 3.3 V). The voltage comes from the zmk,battery
+	  device (framework-cb's fuel gauge, GAUGE_VOLTAGE); the level would
+	  depend on the battery model.
+
+config RETHINK_IDLE_SLEEP_MIN
+	int "Minutes unused on battery before sleeping (0 = never)"
+	default 30
+	range 0 1440
+	help
+	  No input from the keys, the stick or the buttons for this long,
+	  without USB power: System OFF. A key press (the idle matrix stays
+	  armed), USB or moving the mode switch wakes the board, which boots
+	  and reconnects; the key that woke it isn't typed. The stick goes off
+	  earlier (RETHINK_TRACKPOINT_IDLE_OFF_MIN).
+
+config RETHINK_WIRED_OFF
+	bool "Power off in wired mode while USB is unplugged"
+	default y
 	help
 	  With the mode switch on USB and no USB power, the keyboard switches
 	  off its LEDs and backlight and enters System OFF. Only plugging in
@@ -233,6 +270,8 @@ config RETHINK_WIRED_OFF_DELAY_MS
 	depends on RETHINK_WIRED_OFF
 	help
 	  Also covers the time USB needs to report VBUS after boot.
+
+endif # RETHINK_POWER
 
 DT_COMPAT_RETHINK_ADAPTER_CTRL := rethink,adapter-ctrl
 

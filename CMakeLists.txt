@@ -47,6 +47,10 @@ if(CONFIG_RETHINK_BACKLIGHT)
   target_sources(app PRIVATE src/backlight.c)
 endif()
 
+if(CONFIG_RETHINK_POWER)
+  target_sources(app PRIVATE src/power.c)
+endif()
+
 if(CONFIG_RETHINK_WIRED_OFF)
   target_sources(app PRIVATE src/wired_off.c)
 endif()

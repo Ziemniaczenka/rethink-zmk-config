@@ -241,11 +241,14 @@ static const struct {
     {RESET_PIN, "reset pin"},
     {RESET_SOFTWARE, "software (a reboot, or after a fatal error)"},
     {RESET_BROWNOUT, "brown-out"},
-    {RESET_POR, "power-on"},
+    // On the nRF54L, Zephyr's POR is VBUS waking the chip from System OFF;
+    // a real power-on records nothing (cause_str)
+    {RESET_POR, "USB woke it from System OFF"},
     {RESET_WATCHDOG, "watchdog: the system work queue stopped"},
     {RESET_DEBUG, "debugger"},
     {RESET_SECURITY, "security"},
-    {RESET_LOW_POWER_WAKE, "wake from System OFF"},
+    // A GPIO sense (LPCOMP and NFC, the other sources, aren't used)
+    {RESET_LOW_POWER_WAKE, "a key or the mode switch woke it from System OFF"},
     {RESET_CPU_LOCKUP, "CPU lockup"},
     {RESET_CLOCK, "clock"},
     {RESET_HARDWARE, "hardware"},
