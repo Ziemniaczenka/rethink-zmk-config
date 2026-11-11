@@ -1,0 +1,9 @@
+# Copyright (c) 2026 Ziemniaczenka
+# SPDX-License-Identifier: MIT
+
+if SHIELD_RETHINK_E580
+
+config ZMK_KEYBOARD_NAME
+    default "ReThink E580"
+
+endif # SHIELD_RETHINK_E580

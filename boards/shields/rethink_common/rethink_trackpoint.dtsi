@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: MIT
  *
  * TP1 pointing stick (Mezzanine 37-40, FFC1 J5), for keyboard shields. Include
- * after rethink_adapter.dtsi. FW_DAT and FW_CLK reach the stick through the
+ * after rethink_adapter.dtsi. For the FFC2 stick (TP2, J8), a shield sets tp2
+ * and TP2_RST on &trackpoint (rethink_t480, rethink_e580). FW_DAT and FW_CLK reach the stick through the
  * PCA9306 level shifter (JP4/JP5 1-2) or directly (2-3). Its movement and
  * buttons go to ZMK as a mouse (CONFIG_ZMK_POINTING, on by default for
  * shields with this node). Keys control it with &tp TP_OFF, TP_ON, TP_TOG,

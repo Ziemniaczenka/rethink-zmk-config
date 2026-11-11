@@ -1,0 +1,74 @@
+/*
+ * Copyright (c) 2026 Ziemniaczenka
+ * SPDX-License-Identifier: MIT
+ *
+ * ThinkPad T480 keyboard on FFC2: the 36-pin matrix cable and the 12-pin
+ * cable (TrackPoint, backlight), UK ISO or US ANSI. Mapped with
+ * scripts/matrix_scan.py on a UK ISO keyboard (85 keys): every key is at its
+ * T420 position (rethink_t420). On that keyboard U, I, O and P never
+ * registered (a broken trace in it) and J registers at the lightest touch,
+ * so those five are the T420's positions too, as is the ANSI keyboard's \
+ * above Enter (RC(4,8)). 86 positions; the comments name the keys by
+ * their UK ISO legends.
+ *
+ * Pin 36 of the matrix cable is KBD_ID, on DRV16, which the matrix leaves
+ * alone (no key there). The Caps Lock LED follows the host; the Fn lock,
+ * mute and mic mute LEDs rest on their pull-ups. No backlight yet: BUCK1
+ * stays off. The TrackPoint is TP2 (adapter JP7, JP8, JP9 at 1-2: 3.3 V), a
+ * mouse; its three buttons come over the matrix cable (pins 33-35) to the
+ * adapter and on to the stick.
+ */
+
+#include <dt-bindings/zmk/matrix_transform.h>
+
+#include "../rethink_common/rethink_cb.dtsi"
+#include "../rethink_common/rethink_adapter.dtsi"
+#include "../rethink_common/rethink_adapter_matrix.dtsi"
+#include "../rethink_common/rethink_trackpoint.dtsi"
+
+&rethink_adapter {
+    capslock-led-gpios = <&rethink_expander RETHINK_EXP_LEDCPSLOCK 0>;
+};
+
+// The FFC2 stick: TP2, its reset on the expander's P1_1 (R22 pull-up), its
+// supply per CONFIG_RETHINK_TP2_SUPPLY_* (3.3 V by default)
+&trackpoint {
+    tp2;
+    reset-gpios = <&rethink_expander RETHINK_EXP_TP2_RST 0>;
+};
+
+/ {
+    chosen {
+        zmk,physical-layout = &rethink_t480_layout;
+    };
+
+    rethink_t480_layout: rethink_t480_layout {
+        compatible = "zmk,physical-layout";
+        display-name = "T480 ISO/ANSI";
+        transform = <&rethink_t480_transform>;
+    };
+
+    // Keys left to right, row by row; RC(r,c) = SENSEr x DRVc, row 8 = HOTKEY
+    // (0)
+    rethink_t480_transform: rethink_t480_transform {
+        compatible = "zmk,matrix-transform";
+        rows = <9>;
+        columns = <18>;
+        map = <
+            // Esc      F1       F2       F3       F4       F5       F6       F7       F8       F9       F10      F11       F12      Home      End       Insert   Delete
+               RC(5,0)  RC(0,1)  RC(0,2)  RC(3,2)  RC(5,2)  RC(5,8)  RC(5,5)  RC(3,6)  RC(0,6)  RC(0,8)  RC(1,8)  RC(1,10)  RC(1,9)  RC(0,12)  RC(1,12)  RC(0,9)  RC(0,10)
+            // `        1        2        3        4        5        6        7        8        9        0        -        =        Bksp
+               RC(0,0)  RC(1,0)  RC(1,1)  RC(1,2)  RC(1,3)  RC(0,3)  RC(0,4)  RC(1,4)  RC(1,5)  RC(1,6)  RC(1,7)  RC(0,7)  RC(0,5)  RC(3,8)
+            // Tab      Q        W        E        R        T        Y        U        I        O        P        [        ]        \ ANSI   Enter
+               RC(3,0)  RC(2,0)  RC(2,1)  RC(2,2)  RC(2,3)  RC(3,3)  RC(3,4)  RC(2,4)  RC(2,5)  RC(2,6)  RC(2,7)  RC(3,7)  RC(3,5)  RC(4,8)  RC(6,8)
+            // Caps     A        S        D        F        G        H        J        K        L        ;        '        # ISO
+               RC(3,1)  RC(4,0)  RC(4,1)  RC(4,2)  RC(4,3)  RC(5,3)  RC(5,4)  RC(4,4)  RC(4,5)  RC(4,6)  RC(4,7)  RC(5,7)  RC(6,7)
+            // LShift    \ ISO    Z        X        C        V        B        N        M        ,        .        /        RShift
+               RC(3,14)  RC(5,1)  RC(6,0)  RC(6,1)  RC(6,2)  RC(6,3)  RC(7,3)  RC(7,4)  RC(6,4)  RC(6,5)  RC(6,6)  RC(7,7)  RC(6,14)
+            // Fn       LCtrl     Win      LAlt      Space    AltGr     PrtSc     RCtrl     PgUp      Up        PgDn
+               RC(8,0)  RC(0,15)  RC(3,9)  RC(5,13)  RC(7,8)  RC(7,13)  RC(1,13)  RC(6,15)  RC(0,11)  RC(5,12)  RC(1,11)
+            // Left      Down      Right
+               RC(7,12)  RC(7,10)  RC(7,9)
+        >;
+    };
+};

@@ -25,3 +25,13 @@ include:
   - board: framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk
     shield: rethink_t420
     snippet: rethink-usb-log
+  - board: framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk
+    shield: rethink_t480
+  - board: framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk
+    shield: rethink_t480
+    snippet: rethink-usb-log
+  - board: framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk
+    shield: rethink_e580
+  - board: framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk
+    shield: rethink_e580
+    snippet: rethink-usb-log
