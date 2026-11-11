@@ -24,7 +24,9 @@
 //
 // With the middle button held, movement scrolls instead (vertical, or
 // sideways when that is clearly stronger; in sixteenths of a step with smooth
-// scrolling); the middle button clicks only if let go without movement.
+// scrolling); the middle button clicks only if let go without movement. A
+// setting turns this off, for programs that use the middle button held
+// themselves; it is read each time the middle button goes down.
 //
 // The stick calibrates itself: its zero point is set at the self-test, and
 // again whenever the force stays constant for 0.53 s (hands off: drift
@@ -143,9 +145,9 @@ static int conversions(int rate) { return rate == 60 ? 120 : rate >= 100 ? 100 :
 
 // Requests to the thread: TP_OFF, TP_ON, TP_RECAL, a key press after an idle
 // power-off, a packet with an error, a new report rate or stick setting
-#define REQ_WAKE (TP_PTS_TOG + 1)
-#define REQ_RESEND (TP_PTS_TOG + 2)
-#define REQ_CONFIG (TP_PTS_TOG + 3)
+#define REQ_WAKE (TP_SCROLL_TOG + 1)
+#define REQ_RESEND (TP_SCROLL_TOG + 2)
+#define REQ_CONFIG (TP_SCROLL_TOG + 3)
 
 // First packet byte: buttons, a bit that is always 1, sign bits
 #define PKT_BUTTONS 0x07
@@ -222,6 +224,9 @@ static const struct rethink_tp_setting_info infos[] = {
     [RETHINK_TP_RESET_MS] = {"reset_ms", DT_INST_PROP(0, reset_ms), 1, 1000,
                              "reset held after power-on, ms (specification: 600)"},
 #if SCROLL
+    [RETHINK_TP_MIDDLE_SCROLL] = {"middle_scroll",
+                                  IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_MIDDLE_SCROLL), 0, 1,
+                                  "middle button held: scrolls (0: a plain middle button)"},
     [RETHINK_TP_SCROLL_DIVISOR] = {"scroll_divisor", CONFIG_RETHINK_TRACKPOINT_SCROLL_DIVISOR, 1,
                                    255, "stick counts per wheel step"},
     [RETHINK_TP_SCROLL_DEAD_ZONE] = {"scroll_dead_zone",
@@ -242,6 +247,7 @@ static atomic_t values[] = {
         ATOMIC_INIT(IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_PRESS_TO_SELECT)),
     [RETHINK_TP_RESET_MS] = ATOMIC_INIT(DT_INST_PROP(0, reset_ms)),
 #if SCROLL
+    [RETHINK_TP_MIDDLE_SCROLL] = ATOMIC_INIT(IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_MIDDLE_SCROLL)),
     [RETHINK_TP_SCROLL_DIVISOR] = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SCROLL_DIVISOR),
     [RETHINK_TP_SCROLL_DEAD_ZONE] = ATOMIC_INIT(CONFIG_RETHINK_TRACKPOINT_SCROLL_H_DEAD_ZONE),
 #endif
@@ -666,18 +672,23 @@ static void report(const uint8_t p[3]) {
     }
 
 #if SCROLL
-    if (pressed & PKT_MIDDLE) {
-        if (!scroll.held) {
-            scroll.held = true;
-            scroll.moved = scroll.wheel = scroll.hwheel = 0;
-        }
-        scroll_by(&e, dx, dy);
-        dx = dy = 0;
-    } else if (scroll.held) {
-        scroll.held = false;
-        click = scroll.moved <= CLICK_SLOP;
+    // Scrolling or a plain middle button, as set when the button went down,
+    // so a switch while it is held changes nothing until it comes up
+    if ((pressed & PKT_MIDDLE) && !scroll.held && !(buttons & PKT_MIDDLE) &&
+        setting(RETHINK_TP_MIDDLE_SCROLL)) {
+        scroll.held = true;
+        scroll.moved = scroll.wheel = scroll.hwheel = 0;
     }
-    pressed &= ~PKT_MIDDLE;
+    if (scroll.held) {
+        if (pressed & PKT_MIDDLE) {
+            scroll_by(&e, dx, dy);
+            dx = dy = 0;
+        } else {
+            scroll.held = false;
+            click = scroll.moved <= CLICK_SLOP;
+        }
+        pressed &= ~PKT_MIDDLE;
+    }
 #endif
 
     if (dx) {
@@ -1185,6 +1196,13 @@ int rethink_tp_request(uint32_t cmd) {
     case TP_PTS_TOG:
         return rethink_tp_setting_set(RETHINK_TP_PRESS_TO_SELECT,
                                       !setting(RETHINK_TP_PRESS_TO_SELECT));
+    case TP_SCROLL_TOG:
+#if SCROLL
+        return rethink_tp_setting_set(RETHINK_TP_MIDDLE_SCROLL,
+                                      !setting(RETHINK_TP_MIDDLE_SCROLL));
+#else
+        return -ENOTSUP;
+#endif
     case TP_OFF:
     case TP_ON:
     case TP_RECAL:

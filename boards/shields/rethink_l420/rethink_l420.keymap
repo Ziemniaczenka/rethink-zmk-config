@@ -14,9 +14,9 @@
  *
  * Fn+F8 (pointing device) switches the TrackPoint on and off; Ctrl+Fn+F8
  * recalibrates it, with the hands off the stick; Alt+Fn+F8 switches
- * press-to-select (clicking by pressing the stick) on and off, kept in
- * flash. Report rate keys
- * (Shift+Fn+F8 up, Ctrl+Shift+Fn+F8 down) are commented out below.
+ * press-to-select (clicking by pressing the stick) on and off; Shift+Fn+F8
+ * switches scrolling with the middle button held on and off (off: a plain
+ * middle button, for programs that pan with it). Both are kept in flash.
  *
  * Fn+F10 (NmLk) toggles the embedded keypad: the digits on 7-9, U-O, J-L
  * and M, / * - + on 0, P, ; and /. It sends digits and keypad operators,
@@ -32,9 +32,15 @@
 
 / {
     behaviors {
-        // Fn+F8: TrackPoint on/off, with Ctrl: recalibrate, with Alt:
-        // press-to-select on/off
+        // Fn+F8: TrackPoint on/off; with Ctrl: recalibrate; with Alt:
+        // press-to-select on/off; with Shift: middle-button scrolling on/off
         tp_f8: tp_f8 {
+            compatible = "zmk,behavior-mod-morph";
+            #binding-cells = <0>;
+            bindings = <&tp_f8_alt>, <&tp TP_SCROLL_TOG>;
+            mods = <(MOD_LSFT|MOD_RSFT)>;
+        };
+        tp_f8_alt: tp_f8_alt {
             compatible = "zmk,behavior-mod-morph";
             #binding-cells = <0>;
             bindings = <&tp_f8_ctrl>, <&tp TP_PTS_TOG>;
@@ -46,21 +52,9 @@
             bindings = <&tp TP_TOG>, <&tp TP_RECAL>;
             mods = <(MOD_LCTL|MOD_RCTL)>;
         };
-        // Report rate keys: &tp_f8_rate instead of &tp_f8 on Fn+F8 adds
-        // Shift: rate up a step (10, 20, 40, 60, 80, 100, 200 a second),
-        // Ctrl+Shift: down, until the next reset
-        // tp_f8_rate: tp_f8_rate {
-        //     compatible = "zmk,behavior-mod-morph";
-        //     #binding-cells = <0>;
-        //     bindings = <&tp_f8>, <&tp_rate>;
-        //     mods = <(MOD_LSFT|MOD_RSFT)>;
-        // };
-        // tp_rate: tp_rate {
-        //     compatible = "zmk,behavior-mod-morph";
-        //     #binding-cells = <0>;
-        //     bindings = <&tp TP_RATE_UP>, <&tp TP_RATE_DN>;
-        //     mods = <(MOD_LCTL|MOD_RCTL)>;
-        // };
+        // Report rate keys exist but aren't bound: &tp TP_RATE_UP and
+        // &tp TP_RATE_DN step the rate (kept in flash); "tp set rate" in the
+        // shell sets it
     };
 
     keymap {

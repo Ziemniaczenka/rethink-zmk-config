@@ -36,10 +36,10 @@ bool rethink_tp_powered(void);
 // True while movement goes to ZMK
 bool rethink_tp_pointing(void);
 
-// TP_OFF, TP_ON, TP_TOG, TP_RECAL, TP_RATE_UP, TP_RATE_DN or TP_PTS_TOG
-// (dt-bindings/rethink/trackpoint.h), carried out by the stick's thread;
-// TP_TOG, the new rate and press-to-select (settings, so saved) are decided
-// now. Returns at once, -EINVAL for
+// TP_OFF, TP_ON, TP_TOG, TP_RECAL, TP_RATE_UP, TP_RATE_DN, TP_PTS_TOG or
+// TP_SCROLL_TOG (dt-bindings/rethink/trackpoint.h), carried out by the
+// stick's thread; TP_TOG, the new rate, press-to-select and middle-button
+// scrolling (settings, so saved) are decided now. Returns at once, -EINVAL for
 // anything else. The thread also powers the stick off once neither it nor a
 // key was used for CONFIG_RETHINK_TRACKPOINT_IDLE_OFF_MIN; the next key press
 // starts it again.
@@ -66,8 +66,10 @@ enum rethink_tp_setting {
     // Milliseconds the reset is held after power-on
     RETHINK_TP_RESET_MS,
 #if IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_SCROLL)
-    // Scrolling with the middle button held: stick counts per wheel step,
-    // sideways counts per report that don't scroll
+    // The middle button held scrolls (1) or is a plain middle button (0);
+    // scrolling: stick counts per wheel step, sideways counts per report
+    // that don't scroll
+    RETHINK_TP_MIDDLE_SCROLL,
     RETHINK_TP_SCROLL_DIVISOR,
     RETHINK_TP_SCROLL_DEAD_ZONE,
 #endif

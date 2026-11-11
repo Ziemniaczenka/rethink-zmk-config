@@ -7,7 +7,7 @@
  * PCA9306 level shifter (JP4/JP5 1-2) or directly (2-3). Its movement and
  * buttons go to ZMK as a mouse (CONFIG_ZMK_POINTING, on by default for
  * shields with this node). Keys control it with &tp TP_OFF, TP_ON, TP_TOG,
- * TP_RECAL, TP_RATE_UP, TP_RATE_DN and TP_PTS_TOG (#include
+ * TP_RECAL, TP_RATE_UP, TP_RATE_DN, TP_PTS_TOG and TP_SCROLL_TOG (#include
  * <dt-bindings/rethink/trackpoint.h> in the keymap).
  */
 

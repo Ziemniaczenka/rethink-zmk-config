@@ -407,6 +407,16 @@ config RETHINK_TRACKPOINT_SCROLL
 	  the wheel in sixteenths of a step for hosts that set the HID
 	  Resolution Multiplier, whole steps for others.
 
+config RETHINK_TRACKPOINT_MIDDLE_SCROLL
+	bool "Start with the middle button scrolling"
+	default y
+	depends on RETHINK_TRACKPOINT_SCROLL
+	help
+	  Off: the middle button is a plain middle button, also while held,
+	  for programs that use it themselves (CAD pans or orbits with it).
+	  &tp TP_SCROLL_TOG (Shift+Fn+F8 on the T420 and L420) and "tp set
+	  middle_scroll" switch it; the choice is kept in flash.
+
 config RETHINK_TRACKPOINT_SCROLL_DIVISOR
 	int "Stick counts per wheel step"
 	default 20

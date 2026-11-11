@@ -23,5 +23,8 @@
 #define TP_RATE_DN 5
 // Press-to-select (clicking by pressing the stick) on or off, kept in flash
 #define TP_PTS_TOG 6
+// Middle button held: scrolling, or a plain middle button (for programs that
+// pan with it); kept in flash
+#define TP_SCROLL_TOG 7
 
 #endif

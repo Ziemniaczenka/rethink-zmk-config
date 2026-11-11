@@ -349,6 +349,16 @@ static int cmd_conn(const struct shell *sh, size_t argc, char **argv) {
             shell_error(sh, "Intervals in 1.25 ms units, 6-3200 (7.5 ms-4 s), min <= max");
             return -EINVAL;
         }
+        // Zephyr's rule (else -EINVAL): the supervision timeout outlasts
+        // (latency + 1) intervals twice over
+        if (param.latency > 499 ||
+            param.timeout * 4U <= (1U + param.latency) * param.interval_max) {
+            shell_error(sh,
+                        "(latency + 1) x interval x 2 must stay under the %u ms timeout: lower "
+                        "the latency, e.g. \"ble conn %u %u 0\"",
+                        param.timeout * 10, param.interval_min, param.interval_max);
+            return -EINVAL;
+        }
         args.param = &param;
     }
 
