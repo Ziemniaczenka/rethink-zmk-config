@@ -1,0 +1,11 @@
+/*
+ * Copyright (c) 2026 Ziemniaczenka
+ * SPDX-License-Identifier: MIT
+ *
+ * Charging off, so USB plugged in (for the shell) doesn't charge into the
+ * supply. framework-cb's charger driver stops the charger at boot.
+ */
+
+&npm1300_charger {
+    /delete-property/ charging-enable;
+};

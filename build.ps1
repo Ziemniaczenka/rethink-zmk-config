@@ -11,6 +11,7 @@
 .EXAMPLE
     .\build.ps1                                   # rethink_bare_tester
     .\build.ps1 -Snippet rethink-usb-log -Pristine
+    .\build.ps1 -Shield rethink_t420 -Snippet rethink-usb-shell,rethink-profiling
     .\build.ps1 -Flash                            # build, then flash (see flash.ps1)
     .\build.ps1 -Shell                            # interactive shell in the container
     .\build.ps1 -FrameworkCb ..\zmk-config-fw-cb  # use a local framework-cb checkout
@@ -37,6 +38,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Repo = $PSScriptRoot
+# Several snippets: -Snippet a,b (PowerShell passes them joined by spaces)
+$Snippet = ($Snippet -split '[,\s]+' | Where-Object { $_ }) -join ','
 $Volume = 'rethink-zmk-ws'
 
 # Tag the image by the hash of its inputs, so edits to docker/ trigger a rebuild

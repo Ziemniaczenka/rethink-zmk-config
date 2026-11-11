@@ -11,8 +11,9 @@
 # Env:
 #   SHIELD   default rethink_bare_tester
 #   BOARD    default framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk
-#   SNIPPET  optional, e.g. rethink-usb-log or framework-cb-uart-log
-#   ARTIFACT optional output name, default <shield>[-<snippet>]
+#   SNIPPET  optional, e.g. rethink-usb-log or framework-cb-uart-log; several
+#            separated by commas
+#   ARTIFACT optional output name, default <shield>[-<snippet>...]
 #   ZMK_WS   west workspace, default /zmk-ws (a Docker volume)
 #   CMAKE_ARGS extra arguments passed to CMake
 #   FRAMEWORK_CB_LOCAL set when a local framework-cb is mounted (no west update)
@@ -27,7 +28,7 @@ WS="${ZMK_WS:-/zmk-ws}"
 BOARD="${BOARD:-framework_wireless_tp_kb/nrf54lm20a/cpuapp/zmk}"
 SHIELD="${SHIELD:-rethink_bare_tester}"
 SNIPPET="${SNIPPET:-}"
-ARTIFACT="${ARTIFACT:-${SHIELD}${SNIPPET:+-$SNIPPET}}"
+ARTIFACT="${ARTIFACT:-${SHIELD}${SNIPPET:+-${SNIPPET//,/-}}}"
 BUILD_DIR="$WS/build/$ARTIFACT"
 
 # west projects that get patches, and where the patch series live (in order)
@@ -109,8 +110,10 @@ build() {
     fi
     patch_all
 
-    local snippet_args=()
-    [ -n "$SNIPPET" ] && snippet_args=(-S "$SNIPPET")
+    local snippet_args=() s
+    for s in ${SNIPPET//,/ }; do
+        snippet_args+=(-S "$s")
+    done
 
     # Zephyr_DIR instead of `west zephyr-export`, whose registry in ~/.cmake
     # does not survive a throwaway container

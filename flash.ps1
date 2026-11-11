@@ -46,7 +46,7 @@ function Fail([string]$Message) {
 if (-not $File -and -not $Shield -and -not $Reset) {
     Write-Host @'
 Usage:
-  .\flash.ps1 -Shield <shield> [-Snippet <snippet>] [-Port COMx]
+  .\flash.ps1 -Shield <shield> [-Snippet <snippet>[,<snippet>]] [-Port COMx]
   .\flash.ps1 -File <image.signed.bin> [-Port COMx]
   .\flash.ps1 -Reset [-Port COMx]   leave the bootloader without flashing
   Optional: -Mtu <bytes>, SMP packet size (default 1024, '' for mcumgr's)
@@ -66,7 +66,8 @@ Enter the bootloader first: hold the pairing button while plugging in USB, or
 if ($Reset) {
     $File = ''
 } elseif (-not $File) {
-    $artifact = if ($Snippet) { "$Shield-$Snippet" } else { $Shield }
+    # Several snippets (-Snippet a,b) name the image <shield>-a-b, as build.ps1 does
+    $artifact = if ($Snippet) { "$Shield-$(($Snippet -split '[,\s]+' | Where-Object { $_ }) -join '-')" } else { $Shield }
     $File = Join-Path $PSScriptRoot "out\$artifact.signed.bin"
 }
 if ($File -and -not (Test-Path $File)) { Fail "Image not found: $File (run .\flash.ps1 to list images)" }

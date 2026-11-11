@@ -1,0 +1,4 @@
+name: rethink-profiling
+append:
+  EXTRA_CONF_FILE: profiling.conf
+  EXTRA_DTC_OVERLAY_FILE: profiling.overlay
