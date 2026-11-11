@@ -19,8 +19,10 @@
 //
 // The record is kept in the last 256 bytes of RAM, which the linker leaves
 // unused (it rounds RAM down to whole kilobytes; MCUboot too) and a reset
-// doesn't clear. The addresses map to functions with the build's .elf
-// (addr2line).
+// doesn't clear. The addresses map to functions with the .elf of the build
+// that wrote the record (addr2line). The record carries that build's end of
+// code (__text_region_end), and scripts/build.sh keeps each .elf as
+// out/elf/<artifact>-<that address>.elf.
 
 #include <stddef.h>
 #include <string.h>
@@ -68,6 +70,8 @@ struct trace {
 
 struct record {
     uint32_t magic;
+    // The build that wrote it: its end of code
+    uint32_t build;
     uint32_t kind;
     // Fatal: K_ERR_*; stall: ms without the work queue
     uint32_t reason;
@@ -101,8 +105,11 @@ static uint32_t checksum(const struct record *r) {
     return sum;
 }
 
+static uint32_t build_stamp(void) { return (uintptr_t)__text_region_end; }
+
 static void save(const struct record *r) {
     *saved = *r;
+    saved->build = build_stamp();
     saved->check = checksum(saved);
 }
 
@@ -335,7 +342,8 @@ void rethink_reset_diag_print(const struct shell *sh) {
         }
         return;
     }
-    shell_print(sh, "Addresses: addr2line with out/<build>.elf (README: ble log)");
+    shell_print(sh, "Addresses: addr2line with out/elf/<build>-%08x.elf%s (README: ble log)",
+                last.build, last.build == build_stamp() ? "" : ", an earlier build");
 }
 
 static int reset_diag_init(void) {

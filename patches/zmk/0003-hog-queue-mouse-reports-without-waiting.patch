@@ -1,0 +1,41 @@
+hog: queue mouse reports without waiting
+
+The pointing input listener sends one mouse report per input event, from
+the system work queue, and zmk_hog_send_mouse_report() waited up to 100 ms
+for room in the HOG queue on each. While the Bluetooth link stalls, the
+queue stays full: with a pointing device sending 80-100 events a second the
+listener never catches up, and the system work queue runs nothing else
+until the link drops. A watchdog fed from the work queue then resets the
+board if the stall lasts long enough.
+
+Queue without waiting and drop the oldest report when the queue is full,
+as before after the wait. Every report carries the present buttons, so what
+is lost is movement over a link that isn't delivering it anyway. The
+message, which said "Consumer" and could now come 100 times a second, is
+debug level.
+
+Applies to petejohanson/zmk 5565f21; the earlier patches don't touch
+hog.c.
+
+diff --git a/app/src/hog.c b/app/src/hog.c
+index 32a5c73..288c513 100644
+--- a/app/src/hog.c
++++ b/app/src/hog.c
+@@ -448,11 +448,14 @@ void send_mouse_report_callback(struct k_work *work) {
+ K_WORK_DEFINE(hog_mouse_work, send_mouse_report_callback);
+ 
+ int zmk_hog_send_mouse_report(struct zmk_hid_mouse_report_body *report) {
+-    int err = k_msgq_put(&zmk_hog_mouse_msgq, report, K_MSEC(100));
++    // No waiting: the pointing input listener calls this from the system work
++    // queue for every event. A stalled link would otherwise hold the queue
++    // there 100 ms per report, for as long as the device keeps moving.
++    int err = k_msgq_put(&zmk_hog_mouse_msgq, report, K_NO_WAIT);
+     if (err) {
+         switch (err) {
+-        case -EAGAIN: {
+-            LOG_WRN("Consumer message queue full, popping first message and queueing again");
++        case -ENOMSG: {
++            LOG_DBG("Mouse message queue full, dropping the oldest report");
+             struct zmk_hid_mouse_report_body discarded_report;
+             k_msgq_get(&zmk_hog_mouse_msgq, &discarded_report, K_NO_WAIT);
+             return zmk_hog_send_mouse_report(report);

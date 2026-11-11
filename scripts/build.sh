@@ -84,6 +84,24 @@ update() {
     patch_all
 }
 
+# The .elf for addr2line on a reset record (ble log): out/<artifact>.elf, and
+# out/elf/<artifact>-<end of code>.elf, the stamp a record carries, so a record
+# written by an earlier build still finds its own. The last 10 per artifact.
+keep_elf() {
+    local elf="$BUILD_DIR/zephyr/zmk.elf" nm stamp
+    cp "$elf" "$REPO/out/$ARTIFACT.elf"
+    nm=$(ls /opt/zephyr-sdk-*/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-nm 2>/dev/null | head -1)
+    [ -n "$nm" ] || return 0
+    stamp=$("$nm" "$elf" | awk '$3 == "__text_region_end" { print $1 }')
+    [ -n "$stamp" ] || return 0
+    mkdir -p "$REPO/out/elf"
+    cp "$elf" "$REPO/out/elf/$ARTIFACT-$stamp.elf"
+    # Only this artifact's: an 8-digit stamp after its name
+    local x='[0-9a-f]'
+    # shellcheck disable=SC2012
+    ls -t "$REPO/out/elf/$ARTIFACT"-$x$x$x$x$x$x$x$x.elf | tail -n +11 | xargs -r rm -f
+}
+
 build() {
     if [ ! -d "$WS/zephyr" ] || ! cmp -s "$REPO/config/west.yml" "$WS/config/west.yml"; then
         echo "Workspace missing or config/west.yml changed: updating $WS"
@@ -108,8 +126,7 @@ build() {
     [ -f "$image" ] || die "build finished but $image is missing"
     mkdir -p "$REPO/out"
     cp "$image" "$REPO/out/$ARTIFACT.signed.bin"
-    # For addr2line on the addresses of a crash record (ble log)
-    cp "$BUILD_DIR/zephyr/zmk.elf" "$REPO/out/$ARTIFACT.elf"
+    keep_elf
     echo
     echo "Signed image: out/$ARTIFACT.signed.bin"
 }

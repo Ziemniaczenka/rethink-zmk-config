@@ -26,3 +26,8 @@ config ZMK_POINTING_SMOOTH_SCROLLING
 # thread stacks" on the T420 shell build, 2026-11-10)
 config BT_RX_STACK_SIZE
     default 2048
+
+# A fatal error reboots at once instead of halting until the watchdog resets
+# the board 8 s later. Shell builds record it first (src/reset_diag.c).
+config RESET_ON_FATAL_ERROR
+    default y
