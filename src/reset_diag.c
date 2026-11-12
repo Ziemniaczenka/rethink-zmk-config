@@ -250,7 +250,8 @@ static const struct {
     // A GPIO sense (LPCOMP and NFC, the other sources, aren't used)
     {RESET_LOW_POWER_WAKE, "a key or the mode switch woke it from System OFF"},
     {RESET_CPU_LOCKUP, "CPU lockup"},
-    {RESET_CLOCK, "clock"},
+    // On the nRF54L: a compare channel of the system timer (GRTC)
+    {RESET_CLOCK, "the system timer woke it from System OFF"},
     {RESET_HARDWARE, "hardware"},
 };
 

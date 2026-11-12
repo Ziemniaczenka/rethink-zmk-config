@@ -24,6 +24,15 @@
     k32src-accuracy-ppm = <100>;
 };
 
+// BUCK2, the 3.3 V rail, may go down to 3.0 V: src/power.c lowers it on a low
+// cell for headroom (CONFIG_RETHINK_BUCK2_LOW_MV). No voltage set at boot, so
+// an nRF reset (a wake from System OFF too) keeps what was set; the nPM1300
+// starts it at 3.3 V (VSET2) when it powers up.
+&npm1300_buck2 {
+    regulator-min-microvolt = <3000000>;
+    /delete-property/ regulator-init-microvolt;
+};
+
 // White LEDs (src/profile_leds.c) and the RGB LED (framework-cb's
 // status_led.c) are driven as GPIOs. With CONFIG_PWM enabled, PWM20/21 would
 // take over their pins.

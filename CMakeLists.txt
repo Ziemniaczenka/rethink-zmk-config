@@ -43,6 +43,10 @@ if(CONFIG_RETHINK_RESET_DIAG)
   target_sources(app PRIVATE src/reset_diag.c)
 endif()
 
+if(CONFIG_RETHINK_PMIC)
+  target_sources(app PRIVATE src/pmic.c)
+endif()
+
 if(CONFIG_RETHINK_BACKLIGHT)
   target_sources(app PRIVATE src/backlight.c)
 endif()
