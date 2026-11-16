@@ -38,6 +38,18 @@
 // write a location): they survive a reset command but not a power cycle, so
 // each start writes them, after a power-on only those that differ from the
 // stick's power-on values (as Linux does).
+//
+// Switching TP_3V3 on charges the stick's and the adapter's capacitors at
+// once: a surge from the battery input that a weak source (a worn or nearly
+// empty cell, a power profiler, a bench supply through a multimeter) can't
+// deliver, so the board resets, and starting the stick again resets it
+// again. So the stick is left off at boot:
+// - in wired mode without USB, where the board powers off shortly anyway,
+//   until USB power comes (which then supplies the surge) or the switch
+//   goes to Bluetooth;
+// - after a switch-on that reset the board (CONFIG_RETHINK_TRACKPOINT_GUARD:
+//   a switch-on on battery is marked in flash and the mark cleared once the
+//   board came through it), until USB power or TP_ON (Fn+F8, "tp on").
 
 #define DT_DRV_COMPAT rethink_trackpoint
 
@@ -64,6 +76,7 @@
 #include <dt-bindings/rethink/trackpoint.h>
 #include <rethink/adapter.h>
 #include <rethink/expander.h>
+#include <rethink/power.h>
 #include <rethink/trackpoint.h>
 
 LOG_MODULE_REGISTER(rethink_trackpoint, CONFIG_RETHINK_TRACKPOINT_LOG_LEVEL);
@@ -300,6 +313,8 @@ static struct k_poll_signal request_signal = K_POLL_SIGNAL_INITIALIZER(request_s
 static atomic_t last_use;
 // Powered off for lack of use: the next key press starts the stick
 static atomic_t idle_off;
+// enum rethink_tp_held: left off at boot, until USB power, the switch or TP_ON
+static atomic_t held;
 
 static void post_request(int req) {
     atomic_or(&requests, BIT(req));
@@ -876,7 +891,55 @@ static uint8_t rate_wanted(void) {
     return slow_idle() && still_ms() >= SLOW_IDLE_MS ? IDLE_RATE : setting(rate_setting());
 }
 
-static int start_locked(void) {
+static bool usb_powered(void) {
+#if IS_ENABLED(CONFIG_ZMK_USB)
+    return zmk_usb_is_powered();
+#else
+    return false;
+#endif
+}
+
+#define GUARD (IS_ENABLED(CONFIG_RETHINK_TRACKPOINT_GUARD) && IS_ENABLED(CONFIG_SETTINGS))
+
+#if GUARD
+#define GUARD_KEY "rethink/tp/guard"
+
+// 1 in flash: a switch-on on battery in progress, or one the board didn't
+// come through. Loaded with the settings; the stick's thread changes it.
+static uint8_t guard;
+
+static void guard_write(uint8_t value) {
+    if (guard == value) {
+        return;
+    }
+
+    // Saved as 0 rather than deleted: one entry in flash per write
+    int err = settings_save_one(GUARD_KEY, &value, sizeof(value));
+
+    if (err) {
+        LOG_WRN("Failed to %s the switch-on mark (%d)", value ? "set" : "clear", err);
+    }
+    guard = value;
+}
+#endif
+
+// Before switching TP_3V3 on. On USB power the surge comes from USB.
+static void guard_arm(void) {
+#if GUARD
+    if (!usb_powered()) {
+        guard_write(1);
+    }
+#endif
+}
+
+// The board came through the switch-on (or there was none)
+static void guard_clear(void) {
+#if GUARD
+    guard_write(0);
+#endif
+}
+
+static int start_stick(void) {
     int64_t begin = k_uptime_get();
     uint8_t reply[2];
     int err = 0;
@@ -897,6 +960,7 @@ static int start_locked(void) {
     bool power_on = !powered;
 
     if (!powered) {
+        guard_arm();
         err = rethink_tp_power_on();
     }
     if (err == -ENODEV) {
@@ -960,6 +1024,15 @@ static int start_locked(void) {
     LOG_INF("Pointing, %u ms after %s (self-test %u ms after the reset)", stats.start_ms,
             power_on ? "power-on" : "the reset command", stats.self_test_ms);
     return 0;
+}
+
+// Whatever the stick did, the board came through its switch-on
+static int start_locked(void) {
+    int err = start_stick();
+
+    guard_clear();
+    atomic_set(&held, RETHINK_TP_HELD_NONE);
+    return err;
 }
 
 int rethink_tp_start(void) {
@@ -1108,6 +1181,15 @@ static K_SEM_DEFINE(settings_loaded, 0, 1);
 
 static int tp_settings_set(const char *name, size_t len, settings_read_cb read_cb,
                            void *cb_arg) {
+#if GUARD
+    const char *rest;
+
+    if (settings_name_steq(name, "guard", &rest) && !rest) {
+        return len == sizeof(guard) && read_cb(cb_arg, &guard, sizeof(guard)) == sizeof(guard)
+                   ? 0
+                   : -EINVAL;
+    }
+#endif
     for (int s = 0; s < RETHINK_TP_SETTINGS; s++) {
         const char *next;
         int32_t value;
@@ -1354,6 +1436,8 @@ static void carry_out(atomic_val_t req) {
     }
     if (req & BIT(TP_OFF)) {
         rethink_tp_power_off();
+        // Off by hand: no start when USB power comes
+        atomic_set(&held, RETHINK_TP_HELD_NONE);
     }
     // A wake-up only if no key switched the stick off in the meantime
     if ((req & BIT(TP_ON)) || ((req & BIT(REQ_WAKE)) && atomic_get(&idle_off))) {
@@ -1386,13 +1470,64 @@ static int32_t slow_left_ms(void) {
     return MAX(SLOW_IDLE_MS - (int32_t)still_ms(), 0);
 }
 
+// While the stick is left off: how often the mode switch is looked at
+#define HELD_POLL_MS 250
+
 static k_timeout_t next_timeout(void) {
     int32_t idle = idle_left_ms();
     int32_t slow = slow_left_ms();
     int32_t ms = idle < 0 ? slow : slow < 0 ? idle : MIN(idle, slow);
 
+    if (atomic_get(&held) == RETHINK_TP_HELD_WIRED) {
+        ms = ms < 0 ? HELD_POLL_MS : MIN(ms, HELD_POLL_MS);
+    }
     return ms < 0 ? K_FOREVER : K_MSEC(ms);
 }
+
+// At boot: the stick on, unless it is to be left off
+static void boot_start(void) {
+#if GUARD
+    if (guard) {
+        atomic_set(&held, RETHINK_TP_HELD_GUARD);
+        LOG_WRN("The pointing stick's last switch-on reset the board: left off until USB power "
+                "or Fn+F8");
+        return;
+    }
+#endif
+    if (rethink_wired_off_pending()) {
+        atomic_set(&held, RETHINK_TP_HELD_WIRED);
+        LOG_INF("Wired mode without USB: pointing stick left off");
+        return;
+    }
+    // Apart from Bluetooth's start (diagnostic)
+    if (CONFIG_RETHINK_BOOT_STAGGER_MS > 0) {
+        k_msleep(CONFIG_RETHINK_BOOT_STAGGER_MS);
+    }
+    rethink_tp_start();
+}
+
+// A stick left off at boot starts once USB powers the board, or once the
+// board stays on in wired mode (USB, or the switch moved to Bluetooth)
+static void resume_held(void) {
+    switch (atomic_get(&held)) {
+    case RETHINK_TP_HELD_WIRED:
+        if (!rethink_wired_off_pending()) {
+            LOG_INF("Staying on: pointing stick on");
+            rethink_tp_start();
+        }
+        break;
+    case RETHINK_TP_HELD_GUARD:
+        if (usb_powered()) {
+            LOG_INF("USB power: pointing stick on");
+            rethink_tp_start();
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+enum rethink_tp_held rethink_tp_held(void) { return atomic_get(&held); }
 
 // Starts the stick after boot (the adapter is up by then), then reports
 // packets, carries out requests, sets the rate for moving or still and
@@ -1410,7 +1545,7 @@ static void tp_thread(void *p1, void *p2, void *p3) {
         LOG_WRN("Settings not loaded: defaults");
     }
 #endif
-    rethink_tp_start();
+    boot_start();
 
     for (;;) {
         k_poll(events, ARRAY_SIZE(events), next_timeout());
@@ -1419,6 +1554,7 @@ static void tp_thread(void *p1, void *p2, void *p3) {
             k_poll_signal_reset(&request_signal);
             carry_out(atomic_clear(&requests));
         }
+        resume_held();
         events[0].state = K_POLL_STATE_NOT_READY;
         events[1].state = K_POLL_STATE_NOT_READY;
 

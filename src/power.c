@@ -16,12 +16,21 @@
 // - Unused: on battery, no input from any device (keys, the stick, the
 //   buttons) for CONFIG_RETHINK_IDLE_SLEEP_MIN. A key, USB or the mode
 //   switch wakes it; the key that wakes it isn't typed.
+// - Resets in a row on battery (CONFIG_RETHINK_RESET_LOOP_OFF): a cell too
+//   weak for the board (worn, cold, nearly empty) can reset it as it starts,
+//   again and again, a few mA on average, before the low-battery readings
+//   ever add up. Each start on battery counts in flash; STABLE_MS up, or any
+//   power-off from here, clears the count, and a start on USB power doesn't
+//   count. A start that finds that many in a row goes to ship mode at once,
+//   before the stick and Bluetooth start. Ship mode's cause is kept for the
+//   start after it ("power stat").
 //
-// The same battery readings keep BUCK2, the 3.3 V rail, out of dropout: at
-// 3.0 V under CONFIG_RETHINK_BUCK2_LOW_MV, at 3.3 V again over
+// The same battery readings keep BUCK2, the 3.3 V rail, out of dropout, which
+// costs about 3 mA, System OFF included: at 3.0 V under
+// CONFIG_RETHINK_BUCK2_LOW_MV, at 3.3 V again over
 // CONFIG_RETHINK_BUCK2_HIGH_MV, both changes with headroom. A change without
-// headroom brings a state that draws about 3 mA more until the cell is above
-// about 3.35 V or USB is plugged in: src/pmic.c makes the boot's change and
+// headroom brings a state that draws as much until the cell is above about
+// 3.35 V or USB is plugged in: src/pmic.c makes the boot's change and
 // restarts BUCK2 after it, and each reading here (20 ms after a change)
 // restarts a BUCK2 found in that state.
 //
@@ -49,6 +58,14 @@
 #include <zephyr/pm/device.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/poweroff.h>
+
+#if defined(CONFIG_RETHINK_RESET_LOOP_OFF) && CONFIG_RETHINK_RESET_LOOP_OFF > 0
+#define RESET_LOOP CONFIG_RETHINK_RESET_LOOP_OFF
+#include <zephyr/drivers/mfd/npm13xx.h>
+#include <zephyr/settings/settings.h>
+#else
+#define RESET_LOOP 0
+#endif
 
 #include <zmk/event_manager.h>
 #include <zmk/events/usb_conn_state_changed.h>
@@ -145,7 +162,118 @@ static bool buck2_follow(int mv) {
 
 static void battery_stop(void);
 
+#if RESET_LOOP
+#define STARTS_KEY "rethink/power/starts"
+// Up this long: not a start in a reset loop
+#define STABLE_MS 30000
+
+// Why the board went to ship mode, for the start after it
+enum ship_cause {
+    SHIP_NONE,
+    SHIP_LOW_BATTERY,
+    SHIP_RESET_LOOP,
+};
+
+// In flash: starts on battery in a row not STABLE_MS up, and ship mode's
+// cause until the start after it
+struct starts {
+    uint8_t count;
+    uint8_t ship;
+};
+
+static const struct device *const npm1300 = DEVICE_DT_GET(DT_NODELABEL(npm1300));
+// What flash holds; what this start found there
+static struct starts stored;
+static struct starts found;
+// Going to ship mode for the reset loop: the count stays
+static bool loop_off;
+
+static void starts_save(uint8_t count, uint8_t ship) {
+    struct starts s = {.count = count, .ship = ship};
+
+    if (s.count == stored.count && s.ship == stored.ship) {
+        return;
+    }
+
+    int err = settings_save_one(STARTS_KEY, &s, sizeof(s));
+
+    if (err) {
+        LOG_WRN("Failed to save the start count (%d)", err);
+    }
+    stored = s;
+}
+
+static int starts_read(const char *key, size_t len, settings_read_cb read_cb, void *cb_arg,
+                       void *param) {
+    if (key == NULL && len == sizeof(stored) &&
+        read_cb(cb_arg, &stored, sizeof(stored)) != sizeof(stored)) {
+        stored = (struct starts){0};
+    }
+    return 0;
+}
+
+// The nPM1300's VBUSINSTATUS: USB isn't reported this early
+static bool vbus_present(void) {
+    uint8_t status;
+
+    return device_is_ready(npm1300) && mfd_npm13xx_reg_read(npm1300, 0x02U, 0x07U, &status) == 0 &&
+           (status & BIT(0));
+}
+
+static void starts_stable(struct k_work *work) { starts_save(0, SHIP_NONE); }
+
+static K_WORK_DELAYABLE_DEFINE(stable_work, starts_stable);
+
+// Before BUCK2's restart at boot (src/pmic.c, APPLICATION 1), the stick's
+// thread and Bluetooth: each can reset the board from a weak source
+static int starts_init(void) {
+    // Apart from the drivers' start (diagnostic)
+    if (CONFIG_RETHINK_BOOT_STAGGER_MS > 0) {
+        k_msleep(CONFIG_RETHINK_BOOT_STAGGER_MS);
+    }
+
+    int err = settings_subsys_init();
+
+    if (!err) {
+        err = settings_load_subtree_direct(STARTS_KEY, starts_read, NULL);
+    }
+    if (err) {
+        LOG_WRN("No start count (%d): no reset-loop cut-off", err);
+        return 0;
+    }
+    found = stored;
+    if (found.ship == SHIP_RESET_LOOP) {
+        LOG_WRN("Ship mode before this start: %d resets in a row on battery", found.count);
+    } else if (found.ship == SHIP_LOW_BATTERY) {
+        LOG_WRN("Ship mode before this start: low battery");
+    }
+
+    if (vbus_present()) {
+        starts_save(0, SHIP_NONE);
+        return 0;
+    }
+    if (found.count >= RESET_LOOP) {
+        LOG_WRN("%d resets in a row on battery: powering off. USB wakes it.", found.count);
+        loop_off = true;
+        starts_save(found.count, SHIP_RESET_LOOP);
+        rethink_power_off(RETHINK_POWER_SHIP);
+    }
+    starts_save(found.count + 1, SHIP_NONE);
+    k_work_schedule(&stable_work, K_MSEC(STABLE_MS));
+    return 0;
+}
+
+SYS_INIT(starts_init, APPLICATION, 0);
+#endif // RESET_LOOP
+
 FUNC_NORETURN void rethink_power_off(uint32_t wake) {
+#if RESET_LOOP
+    // Powering off on purpose: no reset loop
+    if (!loop_off) {
+        k_work_cancel_delayable(&stable_work);
+        starts_save(0, (wake & RETHINK_POWER_SHIP) ? SHIP_LOW_BATTERY : SHIP_NONE);
+    }
+#endif
     // Quiet time: the last access to the nPM1300 well before System OFF
     battery_stop();
 #if IS_ENABLED(CONFIG_RETHINK_PMIC)
@@ -385,6 +513,17 @@ static int cmd_stat(const struct shell *sh, size_t argc, char **argv) {
         }
     }
 #endif
+#if RESET_LOOP
+    shell_print(sh, "Ship mode after %d resets in a row on battery (a start counts until %d s up)",
+                RESET_LOOP, STABLE_MS / 1000);
+    if (found.ship == SHIP_RESET_LOOP) {
+        shell_print(sh, "Before this start: ship mode after %d resets in a row", found.count);
+    } else if (found.ship == SHIP_LOW_BATTERY) {
+        shell_print(sh, "Before this start: ship mode for a low battery");
+    } else {
+        shell_print(sh, "Before this start: %d resets in a row on battery", found.count);
+    }
+#endif
 #if SLEEP_MIN > 0
     if (atomic_get(&sleep_min)) {
         shell_print(sh, "Unused for %u s; sleeps on battery after %d min", unused_ms() / 1000,
@@ -459,7 +598,7 @@ static int cmd_off(const struct shell *sh, size_t argc, char **argv) {
 
 SHELL_STATIC_SUBCMD_SET_CREATE(
     power_cmds,
-    SHELL_CMD(stat, NULL, "USB power, battery, cut-off, BUCK2, time unused", cmd_stat),
+    SHELL_CMD(stat, NULL, "USB power, battery, cut-offs, BUCK2, time unused", cmd_stat),
 #if LOW_MV > 0
     SHELL_CMD_ARG(lowbat, NULL, "<mV>: low-battery cut-off until the next reset", cmd_lowbat, 2,
                   0),

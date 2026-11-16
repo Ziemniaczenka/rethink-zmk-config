@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <stdbool.h>
+
 #include <zephyr/sys/util.h>
 #include <zephyr/toolchain.h>
 
@@ -18,3 +20,11 @@
 // Switches the stick, the adapter, the backlight and the LEDs off and enters
 // System OFF (or ship mode). Waking reboots the board.
 FUNC_NORETURN void rethink_power_off(uint32_t wake);
+
+// Wired mode without USB power: the board powers off shortly
+// (src/wired_off.c, CONFIG_RETHINK_WIRED_OFF)
+#if IS_ENABLED(CONFIG_RETHINK_WIRED_OFF)
+bool rethink_wired_off_pending(void);
+#else
+static inline bool rethink_wired_off_pending(void) { return false; }
+#endif

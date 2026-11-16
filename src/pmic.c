@@ -152,7 +152,42 @@ static int battery_mv(void) {
 }
 #endif
 
+// CONFIG_RETHINK_BOOT_STAGGER_MS (diagnostic): the boot's power events
+// apart in time, so the profiler shows which one a reset follows
+static void stagger(void) {
+    if (CONFIG_RETHINK_BOOT_STAGGER_MS > 0) {
+        k_msleep(CONFIG_RETHINK_BOOT_STAGGER_MS);
+    }
+}
+
+#if CONFIG_RETHINK_BOOT_STAGGER_MS > 0
+// CPU busy: a step on the profiler. First before the SoC's start-up
+// (soc/nordic/nrf54l/soc.c, EARLY 0, linked after this), which switches
+// the nRF's main regulator to its DC/DC converter; then after it.
+static int stagger_busy(void) {
+    k_busy_wait(CONFIG_RETHINK_BOOT_STAGGER_MS * 1000U);
+    return 0;
+}
+
+SYS_INIT_NAMED(stagger_before_soc, stagger_busy, EARLY, 0);
+SYS_INIT_NAMED(stagger_after_soc, stagger_busy, PRE_KERNEL_1, 0);
+
+static int stagger_init(void) {
+    stagger();
+    return 0;
+}
+
+// Before and after the nPM1300's regulator drivers, which set BUCK1 to
+// 3.3 V (regulator-init-microvolt); the MFD and USB's regulator come before
+BUILD_ASSERT(CONFIG_MFD_NPM13XX_INIT_PRIORITY < 84 &&
+             CONFIG_REGULATOR_NPM13XX_COMMON_INIT_PRIORITY > 84 &&
+             CONFIG_REGULATOR_NPM13XX_INIT_PRIORITY < 87 && CONFIG_SENSOR_INIT_PRIORITY > 87);
+SYS_INIT_NAMED(stagger_before_regulators, stagger_init, POST_KERNEL, 84);
+SYS_INIT_NAMED(stagger_after_regulators, stagger_init, POST_KERNEL, 87);
+#endif
+
 static void buck2_boot(void) {
+    stagger();
     boot.start = buck_status();
 
 #if BOOT_LOW_MV > 0
@@ -171,8 +206,10 @@ static void buck2_boot(void) {
 #endif
 
     if (boot.lowered || stuck(boot.start)) {
+        stagger();
         boot.after = buck2_restart();
         boot.restarted = true;
+        stagger();
     }
     // Negative statuses (none, or an error) show as 0xffffff..
     LOG_INF("BUCK2 at boot: battery %d mV, BUCKSTATUS 0x%02x; set to 3.0 V: %s, 0x%02x; "
@@ -232,8 +269,10 @@ static int pmic_init(void) {
     return 0;
 }
 
-// After the regulator and charger drivers (POST_KERNEL)
-SYS_INIT(pmic_init, APPLICATION, 0);
+// After the regulator and charger drivers (POST_KERNEL), and after
+// src/power.c counts the start (APPLICATION 0): BUCK2's restart is a surge
+// from the battery input, and a reset in it must count too
+SYS_INIT(pmic_init, APPLICATION, 1);
 
 #if IS_ENABLED(CONFIG_SHELL) && IS_ENABLED(CONFIG_SENSOR)
 
@@ -283,7 +322,7 @@ static int sample_init(void) {
     return 0;
 }
 
-SYS_INIT(sample_init, APPLICATION, 1);
+SYS_INIT(sample_init, APPLICATION, 2);
 
 void rethink_pmic_quiet(void) { k_work_cancel_delayable(&sample_work); }
 

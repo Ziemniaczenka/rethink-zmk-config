@@ -36,6 +36,19 @@ bool rethink_tp_powered(void);
 // True while movement goes to ZMK
 bool rethink_tp_pointing(void);
 
+// Why the stick was left off at boot; it starts when that ends, or on TP_ON
+enum rethink_tp_held {
+    RETHINK_TP_HELD_NONE,
+    // Wired mode without USB, where the board powers off shortly: until USB
+    // power or the switch to Bluetooth
+    RETHINK_TP_HELD_WIRED,
+    // Its last switch-on reset the board (CONFIG_RETHINK_TRACKPOINT_GUARD):
+    // until USB power
+    RETHINK_TP_HELD_GUARD,
+};
+
+enum rethink_tp_held rethink_tp_held(void);
+
 // TP_OFF, TP_ON, TP_TOG, TP_RECAL, TP_RATE_UP, TP_RATE_DN, TP_PTS_TOG or
 // TP_SCROLL_TOG (dt-bindings/rethink/trackpoint.h), carried out by the
 // stick's thread; TP_TOG, the new rate, press-to-select and middle-button

@@ -60,7 +60,9 @@ properties:
     description: |
       KBD_BL_DTCT. Sampled with the pull-up enabled at init and again before
       each backlight power-on; low means a backlit keyboard is connected. The
-      pull-up then stays on, unless the keyboard holds the pin low.
+      pull-up then stays on, or a pull-down replaces it while the keyboard
+      holds the pin low (the pull-up drew about 35 µA through the E580's,
+      System OFF included). FFC2 shields set it, backlight or not.
 
   # Status LED sinks. A lit LED pulls the pin low; an unlit one rests on the
   # pull-up (open-drain emulation: only the direction register changes, one

@@ -32,6 +32,8 @@ static bool should_be_off(void) {
     return gpio_pin_get_dt(&mode_switch) == 0 && !zmk_usb_is_powered();
 }
 
+bool rethink_wired_off_pending(void) { return should_be_off(); }
+
 static void power_off(struct k_work *work) {
     // The switch or USB may have changed while waiting
     if (!should_be_off()) {

@@ -26,6 +26,8 @@
 &rethink_adapter {
     capslock-led-gpios = <&rethink_expander RETHINK_EXP_LEDCPSLOCK 0>;
     numlock-led-gpios = <&rethink_expander RETHINK_EXP_LEDNUMLOCK 0>;
+    // A backlit keyboard grounds it; read, it then rests on a pull-down
+    bl-detect-gpios = <&rethink_expander RETHINK_EXP_KBD_BL_DTCT GPIO_ACTIVE_LOW>;
 };
 
 // The FFC2 stick: TP2, its reset on the expander's P1_1 (R22 pull-up), its

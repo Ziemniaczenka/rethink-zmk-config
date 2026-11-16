@@ -346,7 +346,7 @@ void rethink_reset_diag_print(const struct shell *sh) {
         }
         return;
     }
-    shell_print(sh, "Addresses: addr2line with out/elf/<build>-%08x.elf%s (README: ble log)",
+    shell_print(sh, "Addresses: addr2line with out/elf/<build>-%08x.elf%s (docs/diagnostics.md)",
                 last.build, last.build == build_stamp() ? "" : ", an earlier build");
 }
 
