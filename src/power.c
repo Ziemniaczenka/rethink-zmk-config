@@ -37,8 +37,10 @@
 // No access to the nPM1300 right before System OFF: a read of BUCK2's voltage
 // there let the system timer (GRTC) wake the nRF54L again at once (reset
 // cause "clock"), every 3 s in wired mode, though every compare channel was
-// disabled. So BUCK2 isn't lowered on the way into System OFF, and a quiet
-// time with the battery check and the pmic sampling stopped comes first.
+// disabled. Switching the backlight off there (BUCK1) looked the same: a loop
+// in wired mode, the backlight restored by ZMK at each start (2026-11-17). So BUCK2 isn't lowered on the
+// way into System OFF, the backlight goes off first, and a quiet time with the
+// battery check and the pmic sampling stopped follows.
 //
 // "power" shell commands show the state and try the cut-off and the sleep
 // without waiting for them.
@@ -48,7 +50,6 @@
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/drivers/led.h>
 #include <zephyr/drivers/regulator.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/init.h>
@@ -83,6 +84,10 @@
 
 #if IS_ENABLED(CONFIG_RETHINK_TRACKPOINT)
 #include <rethink/trackpoint.h>
+#endif
+
+#if IS_ENABLED(CONFIG_RETHINK_BACKLIGHT)
+#include <rethink/backlight.h>
 #endif
 
 LOG_MODULE_REGISTER(rethink_power, LOG_LEVEL_INF);
@@ -269,6 +274,10 @@ FUNC_NORETURN void rethink_power_off(uint32_t wake) {
         starts_save(0, (wake & RETHINK_POWER_SHIP) ? SHIP_LOW_BATTERY : SHIP_NONE);
     }
 #endif
+#if IS_ENABLED(CONFIG_RETHINK_BACKLIGHT)
+    // Switches BUCK1 off: before the quiet time
+    rethink_backlight_shutdown();
+#endif
     // Quiet time: the last access to the nPM1300 well before System OFF
     battery_stop();
 #if IS_ENABLED(CONFIG_RETHINK_PMIC)
@@ -276,9 +285,6 @@ FUNC_NORETURN void rethink_power_off(uint32_t wake) {
 #endif
     k_msleep(200);
 
-#if IS_ENABLED(CONFIG_RETHINK_BACKLIGHT)
-    led_set_brightness(DEVICE_DT_GET(DT_CHOSEN(zmk_backlight)), 0, 0);
-#endif
 #if IS_ENABLED(CONFIG_RETHINK_TRACKPOINT)
     // TP_3V3 (P3.12) would stay on through System OFF
     rethink_tp_power_off();

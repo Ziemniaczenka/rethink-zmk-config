@@ -15,9 +15,12 @@
         zmk,backlight = &rethink_backlight;
     };
 
+    // 50 kHz. On the E580 4096 Hz whined, with VLED_BL dips of 0.5 V once
+    // per period; 25 kHz still whined faintly at the low step; 50 kHz is
+    // silent ("backlight khz" tries others).
     rethink_backlight: rethink_backlight {
         compatible = "rethink,backlight";
-        pwms = <&pwm22 0 PWM_HZ(4096) PWM_POLARITY_NORMAL>;
+        pwms = <&pwm22 0 PWM_KHZ(50) PWM_POLARITY_NORMAL>;
         enable-gpios = <&gpio3 11 GPIO_ACTIVE_HIGH>;
         vin-supply = <&npm1300_buck1>;
 

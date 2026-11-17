@@ -68,13 +68,16 @@ endchoice
 
 config RETHINK_BACKLIGHT_MAX_DUTY
 	int "PWM duty cycle at full brightness (%)"
-	range 1 10
+	range 1 20
 	default 10
 	help
 	  Scales every brightness level to limit the backlight current drawn
-	  from VLED_BL. Capped at 10 % until real keyboards are measured: on
-	  BUCK1 the adapter's boost runs cleanly at 50 mA and fails at about
-	  106 mA.
+	  from VLED_BL. On BUCK1 the adapter's boost runs cleanly at 50 mA
+	  (5 V) and fails at about 106 mA. The E580's backlight takes about
+	  5 mA from the battery per 1 %, and worked at 20 % (rethink_e580
+	  sets 20); a T470's is said to draw about 600 mA at 80 %, 2.5 times
+	  as much, so 10 until such keyboards are measured. "backlight max"
+	  changes it until reboot, up to 50.
 
 config RETHINK_MCUBOOT_NEEDS_POWER_CYCLE
 	bool "Bootloader checks its button only after a power-on reset"
@@ -629,6 +632,22 @@ config RETHINK_BUCK2_RESTART
 	  rail's capacitors. "pmic" shows what was done. If the second write
 	  failed, the board would stay off until battery and USB are both
 	  disconnected.
+
+config RETHINK_USB_1500MA
+	bool "USB input limit 1.5 A from USB-C sources offering 1.5 A or 3 A"
+	default y
+	depends on RETHINK_PMIC
+	depends on SENSOR
+	depends on ZMK_USB
+	depends on $(dt_nodelabel_enabled,npm1300_charger)
+	help
+	  The nPM1300 limits its USB input to the board's vbus-limit-microamp
+	  (500 mA) at each plug-in, and charging takes 450 mA of it: the
+	  backlight's share comes out of the charge current. Half a second
+	  after USB power comes, this reads the source's offer from the
+	  nPM1300's CC detection and, for 1.5 A or 3 A, raises the limit to
+	  1.5 A. Default USB power (a USB-A port, a C-to-A cable) stays at
+	  500 mA. "pmic" shows the offer and the limit.
 
 config RETHINK_RESET_DIAG
 	bool "Record a crash or stall for after the reset"

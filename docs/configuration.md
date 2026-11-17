@@ -13,7 +13,7 @@ How the adapter and Control Board are assembled ([Hardware options](#hardware-op
 | `CONFIG_RETHINK_BOOST_FITTED` | y | U4 (n on Mezz_no_BL, FFC1) | n: the backlight is never powered |
 | `CONFIG_RETHINK_BOOST_EN_TIED` | n | Adapter JP2 closed | BOOST_EN (P0_1) left as an input |
 | `CONFIG_RETHINK_BACKLIGHT_SUPPLY_BUCK1` / `_VBAT` / `_VSYS` | BUCK1 | Control Board R62 / R59 (VBAT) / VSYS on the next revision | BUCK1: the regulator is switched with the backlight |
-| `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY` | 10 (range 1-10) | | Duty cycle at 100 % brightness, to stay within the supply's current. Capped at 10 % until real keyboards are measured |
+| `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY` | 10 (range 1-20), 20 on `rethink_e580` | | Duty cycle at 100 % brightness, to stay within the supply's current. 10 % until a keyboard is measured; the E580 takes about 5 mA from the battery per 1 %. `backlight max` changes it until reboot, up to 50 |
 | `CONFIG_RETHINK_TP1_SUPPLY_5V` / `_3V3` | 5V | Adapter JP6 (+ JP4, JP5) | Read by the pointing stick driver |
 | `CONFIG_RETHINK_TP2_SUPPLY_3V3` / `_5V` | 3V3 | Adapter JP7 (+ JP8, JP9) | Read by the pointing stick driver |
 | `CONFIG_RETHINK_TP2_RESET_PULL_UP` / `_DOWN` | pull-up | Adapter R22 / R23 | Read by the pointing stick driver |
@@ -38,6 +38,7 @@ What a keyboard has (status LEDs, KBD_BL_DTCT pin, backlight) is set by its shie
 | `CONFIG_RETHINK_RESET_LOOP_OFF` | 3 | Ship mode at a start on battery after this many resets in a row (a start counts until 30 s up); 0 = never |
 | `CONFIG_RETHINK_PMIC` | y | BUCK1 off at boot (the board's boot-off doesn't take); `pmic` shell command |
 | `CONFIG_RETHINK_BUCK2_RESTART` | y | From a cell under `CONFIG_RETHINK_BUCK2_LOW_MV`, BUCK2 set to 3.0 V at boot and switched off and on; at boot and each battery check, a BUCK2 stuck in PWM mode switched off and on |
+| `CONFIG_RETHINK_USB_1500MA` | y | USB input limit 1.5 A when a USB-C source offers 1.5 A or 3 A (the nPM1300's CC detection), else the board's 500 mA |
 | `CONFIG_RETHINK_IDLE_SLEEP_MIN` | 30 | Power off after this long unused on battery, until a key, USB or the switch; 0 = never |
 | `CONFIG_RETHINK_WIRED_OFF` | y | System OFF in wired mode while USB is unplugged |
 | `CONFIG_RETHINK_WIRED_OFF_DELAY_MS` | 3000 | Delay before powering off |
@@ -51,6 +52,7 @@ What a keyboard has (status LEDs, KBD_BL_DTCT pin, backlight) is set by its shie
 | `CONFIG_RETHINK_ADAPTER_TEST` | n | `adapter` shell commands for bring-up (set by the `rethink-usb-shell` snippet) |
 | `CONFIG_RETHINK_MATRIX` | if `rethink,matrix` in DT | Matrix with expander columns, direct keys and ghost-key blocking |
 | `CONFIG_RETHINK_BACKLIGHT` | if `rethink,backlight` in DT | Backlight power chain, PWM and interlock (use with `CONFIG_ZMK_BACKLIGHT`) |
+| `CONFIG_ZMK_IDLE_TIMEOUT` (ZMK's) | 30000 | Milliseconds without a key or the stick before the backlight goes off (`CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE`, set in the FFC2 shields); nothing else uses ZMK's idle state here |
 | `CONFIG_RETHINK_BACKLIGHT_TAP_UNLOCK` | y on `rethink_hw_tester`, else n | Triple tap of the pairing button unlocks the backlight until reboot, bypassing KBD_BL_DTCT |
 | `CONFIG_RETHINK_TRACKPOINT` | if `rethink,trackpoint` in DT | Pointing stick power, reset, PS/2 link and pointing |
 | `CONFIG_RETHINK_TRACKPOINT_IDLE_OFF_MIN` | 10 | Minutes with neither the stick nor a key used before the stick is powered off; 0 = never |

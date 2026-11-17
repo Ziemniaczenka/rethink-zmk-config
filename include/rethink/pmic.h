@@ -5,9 +5,9 @@
 
 #pragma once
 
-// Stops this module's own accesses to the nPM1300 (the shell's sampling), for
-// the quiet time before System OFF: an access right before it let the system
-// timer wake the nRF54L again at once (src/power.c)
+// Stops this module's own accesses to the nPM1300 (the shell's sampling, the
+// USB-C check), for the quiet time before System OFF: an access right before
+// it let the system timer wake the nRF54L again at once (src/power.c)
 void rethink_pmic_quiet(void);
 
 // Switches BUCK2 off and on if BUCKSTATUS shows it stuck in PWM mode, for the

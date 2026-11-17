@@ -37,14 +37,22 @@
 // through the gap on the rail's capacitors. If the second write failed, the
 // board would stay off until battery and USB are both disconnected.
 //
+// CONFIG_RETHINK_USB_1500MA: the nPM1300 limits its USB input to the board's
+// vbus-limit-microamp (500 mA) at each plug-in. Charging takes 450 mA of it,
+// so the backlight's share came out of the charge current. The nPM1300 reads
+// the USB-C source's offer on CC1/CC2 (the Control Board wires them to it);
+// half a second after USB power comes, an offer of 1.5 A or 3 A raises the
+// limit to 1.5 A, the nPM1300's maximum. Unplugging returns it to 500 mA.
+//
 // "pmic" shows the bucks' status and the battery current, now and as last
-// read on battery (every 2 s), to see the state after plugging in USB, and
-// what was done to BUCK2.
+// read on battery (every 2 s), to see the state after plugging in USB, what
+// was done to BUCK2, and the USB input limit.
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/mfd/npm13xx.h>
 #include <zephyr/drivers/regulator.h>
 #include <zephyr/drivers/sensor.h>
+#include <zephyr/drivers/sensor/npm13xx_charger.h>
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -53,6 +61,8 @@
 #include <rethink/pmic.h>
 
 #if IS_ENABLED(CONFIG_ZMK_USB)
+#include <zmk/event_manager.h>
+#include <zmk/events/usb_conn_state_changed.h>
 #include <zmk/usb.h>
 #endif
 
@@ -210,7 +220,86 @@ void rethink_pmic_buck2_check(void) {
 }
 #endif // CONFIG_RETHINK_BUCK2_RESTART
 
+#if IS_ENABLED(CONFIG_RETHINK_USB_1500MA)
+
+#define VBUS_START_UA DT_PROP(DT_NODELABEL(npm1300_charger), vbus_limit_microamp)
+#define VBUS_HIGH_UA 1500000
+// The source settles its offer before it switches VBUS on; this covers the
+// nPM1300's detection
+#define VBUS_DELAY K_MSEC(500)
+
+// From the last check: the source's offer (0 none, 500000 default USB, 1500000
+// for 1.5 A or 3 A; negative: not read) and the limit then set
+static struct {
+    int32_t offer_ua;
+    int32_t limit_ua;
+} vbus = {.offer_ua = -ENODATA, .limit_ua = VBUS_START_UA};
+
+static bool vbus_status(enum sensor_attribute_npm13xx_charger attr) {
+    struct sensor_value val;
+
+    return sensor_attr_get(charger, (enum sensor_channel)SENSOR_CHAN_NPM13XX_CHARGER_VBUS_STATUS,
+                           (enum sensor_attribute)attr, &val) == 0 &&
+           val.val1;
+}
+
+static void vbus_check(struct k_work *work) {
+    struct sensor_value val;
+
+    // Each plug-in starts at the startup limit
+    vbus.limit_ua = VBUS_START_UA;
+    if (!vbus_status(SENSOR_ATTR_NPM13XX_CHARGER_VBUS_PRESENT)) {
+        vbus.offer_ua = 0;
+        return;
+    }
+
+    int err = sensor_attr_get(charger, SENSOR_CHAN_CURRENT, SENSOR_ATTR_UPPER_THRESH, &val);
+
+    if (err) {
+        vbus.offer_ua = err;
+        LOG_WRN("USB source's offer not read (%d): input limit %d mA", err,
+                VBUS_START_UA / 1000);
+        return;
+    }
+    vbus.offer_ua = (int32_t)sensor_value_to_micro(&val);
+    if (vbus.offer_ua >= VBUS_HIGH_UA) {
+        sensor_value_from_micro(&val, VBUS_HIGH_UA);
+        err = sensor_attr_set(charger, SENSOR_CHAN_CURRENT, SENSOR_ATTR_CONFIGURATION, &val);
+        if (err) {
+            LOG_WRN("USB input limit not raised (%d)", err);
+        } else {
+            vbus.limit_ua = VBUS_HIGH_UA;
+        }
+    }
+    LOG_INF("USB source offers %s: input limit %d mA",
+            vbus.offer_ua >= VBUS_HIGH_UA ? "1.5 A or 3 A" : "default USB power",
+            vbus.limit_ua / 1000);
+}
+
+static K_WORK_DELAYABLE_DEFINE(vbus_work, vbus_check);
+
+// Set by rethink_pmic_quiet: no more checks before System OFF
+static atomic_t vbus_quiet;
+
+static int vbus_listener(const zmk_event_t *eh) {
+    if (!atomic_get(&vbus_quiet)) {
+        k_work_reschedule(&vbus_work, VBUS_DELAY);
+    }
+    return ZMK_EV_EVENT_BUBBLE;
+}
+
+ZMK_LISTENER(rethink_pmic_vbus, vbus_listener);
+ZMK_SUBSCRIPTION(rethink_pmic_vbus, zmk_usb_conn_state_changed);
+#endif // CONFIG_RETHINK_USB_1500MA
+
 static int pmic_init(void) {
+#if IS_ENABLED(CONFIG_RETHINK_USB_1500MA)
+    // USB plugged in before boot: the nPM1300 has it, ZMK may report it later
+    if (device_is_ready(charger)) {
+        k_work_schedule(&vbus_work, VBUS_DELAY);
+    }
+#endif
+
     if (!device_is_ready(buck1) || !device_is_ready(buck2)) {
         LOG_WRN("Bucks not ready: left as they are");
         return 0;
@@ -287,7 +376,7 @@ static int sample_init(void) {
 
 SYS_INIT(sample_init, APPLICATION, 2);
 
-void rethink_pmic_quiet(void) { k_work_cancel_delayable(&sample_work); }
+static void sample_quiet(void) { k_work_cancel_delayable(&sample_work); }
 
 static const char *const modes[] = {"auto", "hysteretic", "PWM", "?"};
 
@@ -353,6 +442,26 @@ static void print_buck2(const struct shell *sh) {
 }
 #endif
 
+#if IS_ENABLED(CONFIG_RETHINK_USB_1500MA)
+static void print_vbus(const struct shell *sh) {
+    if (!vbus_status(SENSOR_ATTR_NPM13XX_CHARGER_VBUS_PRESENT)) {
+        shell_print(sh, "USB: no power");
+        return;
+    }
+    if (vbus.offer_ua < 0) {
+        shell_print(sh, "USB: source's offer not read (%d)", vbus.offer_ua);
+    } else {
+        shell_print(sh, "USB: source offers %s",
+                    vbus.offer_ua >= VBUS_HIGH_UA ? "1.5 A or 3 A"
+                    : vbus.offer_ua > 0           ? "default USB power"
+                                                  : "nothing on CC");
+    }
+    // At the limit, the nPM1300 takes the load's share from the charge current
+    shell_print(sh, "  input limit %d mA, reached now: %s", vbus.limit_ua / 1000,
+                vbus_status(SENSOR_ATTR_NPM13XX_CHARGER_VBUS_CUR_LIMIT) ? "yes" : "no");
+}
+#endif
+
 static int cmd_pmic(const struct shell *sh, size_t argc, char **argv) {
     struct reading now;
 
@@ -366,14 +475,25 @@ static int cmd_pmic(const struct shell *sh, size_t argc, char **argv) {
 #if IS_ENABLED(CONFIG_RETHINK_BUCK2_RESTART)
     print_buck2(sh);
 #endif
+#if IS_ENABLED(CONFIG_RETHINK_USB_1500MA)
+    print_vbus(sh);
+#endif
     return 0;
 }
 
 SHELL_CMD_REGISTER(pmic, NULL,
                    "nPM1300 bucks (mode, power good, PWM) and battery current, now and as last "
-                   "read on battery (every 2 s); BUCK2 at boot and its restarts",
+                   "read on battery (every 2 s); BUCK2 at boot and its restarts; USB input limit",
                    cmd_pmic);
 
 #else
-void rethink_pmic_quiet(void) {}
+static void sample_quiet(void) {}
 #endif // CONFIG_SHELL && CONFIG_SENSOR
+
+void rethink_pmic_quiet(void) {
+    sample_quiet();
+#if IS_ENABLED(CONFIG_RETHINK_USB_1500MA)
+    atomic_set(&vbus_quiet, 1);
+    k_work_cancel_delayable(&vbus_work);
+#endif
+}
