@@ -612,21 +612,6 @@ config RETHINK_PMIC
 	  a shell, "pmic" shows the bucks' status and the battery current, now
 	  and as last read on battery.
 
-config RETHINK_BOOT_STAGGER_MS
-	int "Diagnostic: pause between the boot's power events, ms"
-	default 0
-	range 0 5000
-	help
-	  The boot's steps, this far apart: the application's start (the CPU
-	  busy for that long, after MCUboot), the SoC's start-up (the nRF's
-	  DC/DC converter on; CPU busy again), the drivers up to the nPM1300's
-	  MFD (USB's regulator, TP_3V3's switch, I2C), the nPM1300's regulator
-	  drivers (BUCK1 to 3.3 V), the other drivers (adapter, charger), the
-	  start count's flash write, BUCK2's change to 3.0 V, its restart,
-	  Bluetooth's start, the stick's switch-on. On a power profiler, the
-	  time from a reset to the next tells which one reset the board. The
-	  rethink-boot-stagger snippet sets 1000.
-
 config RETHINK_BUCK2_RESTART
 	bool "Restart BUCK2 after a change without headroom, and when stuck"
 	default y

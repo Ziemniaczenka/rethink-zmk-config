@@ -227,11 +227,6 @@ static K_WORK_DELAYABLE_DEFINE(stable_work, starts_stable);
 // Before BUCK2's restart at boot (src/pmic.c, APPLICATION 1), the stick's
 // thread and Bluetooth: each can reset the board from a weak source
 static int starts_init(void) {
-    // Apart from the drivers' start (diagnostic)
-    if (CONFIG_RETHINK_BOOT_STAGGER_MS > 0) {
-        k_msleep(CONFIG_RETHINK_BOOT_STAGGER_MS);
-    }
-
     int err = settings_subsys_init();
 
     if (!err) {

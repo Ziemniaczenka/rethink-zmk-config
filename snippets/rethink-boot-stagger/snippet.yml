@@ -1,3 +1,0 @@
-name: rethink-boot-stagger
-append:
-  EXTRA_CONF_FILE: boot-stagger.conf

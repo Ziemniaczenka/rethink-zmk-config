@@ -131,7 +131,6 @@ Images are signed with MCUboot's public development key (`root-ed25519.pem`), wh
 | `rethink-usb-shell` | Same port, as a Zephyr shell with the log | As `rethink-usb-log`, plus the `adapter` bring-up commands, the `log` commands (filters, see below) and the `i2c`, `gpio` and `regulator` shells. See [Adapter bring-up shell](docs/shields.md#adapter-bring-up-shell). |
 | `framework-cb-uart-log` | Header UART: TX P2.02, RX P2.00, 115200 baud | Keeps the UART receiver on (battery drain). |
 | `rethink-profiling` | (no log of its own) | For power profiling from a bench supply into the battery input: charging off, so USB plugged in for the shell doesn't charge into the supply; low-battery cut-off at 3.0 V instead of 3.3 V, under the EFM32 kit's 3.24-3.27 V (less under a running stick) and still there to try ship mode on a bench supply. With the shell: `-Snippet rethink-usb-shell,rethink-profiling` (several snippets separated by commas). With a pointing stick, put a reservoir capacitor across the battery input at the board, 1000 µF for the T420 on the EFM32 kit ([switch-on surge](docs/power.md#pointing-stick-switch-on-surge)). |
-| `rethink-boot-stagger` | (no log of its own) | Diagnostic: the boot's steps 1 s apart (the application's start after MCUboot, the SoC's start-up, the drivers, the nPM1300's regulator drivers, the start count's flash write, BUCK2's change to 3.0 V and its restart, Bluetooth's start, the stick's switch-on), so a profiler shows which one resets the board from a weak source (`CONFIG_RETHINK_BOOT_STAGGER_MS`). With `rethink-usb-shell,rethink-profiling`. |
 
 All of them log at ZMK debug level. The USB driver logs only warnings (at info level it logged every receive buffer). In the shell, `log enable inf zmk` hides ZMK's debug lines (keys, HID reports, the connection details) and keeps the rest, such as `rethink_ble`'s connection events (`ble log`); `log enable dbg zmk` brings them back, `log disable <module>` silences one (`rethink_trackpoint`, `fuel_gauge`, ...) and `log status` lists them.
 
@@ -169,8 +168,7 @@ All of them log at ZMK debug level. The USB driver logs only warnings (at info l
 ├── patches/zmk/                 Patches to ZMK, applied at build time (see Software stack)
 └── snippets/                    rethink-usb-log (USB CDC ACM logging),
                                  rethink-usb-shell (shell and log on the same port),
-                                 rethink-profiling (charging and low-battery cut-off off),
-                                 rethink-boot-stagger (the boot's steps 1 s apart)
+                                 rethink-profiling (charging off, low-battery cut-off at 3.0 V)
 ```
 
 ## Changing framework-cb

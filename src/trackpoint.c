@@ -1499,10 +1499,6 @@ static void boot_start(void) {
         LOG_INF("Wired mode without USB: pointing stick left off");
         return;
     }
-    // Apart from Bluetooth's start (diagnostic)
-    if (CONFIG_RETHINK_BOOT_STAGGER_MS > 0) {
-        k_msleep(CONFIG_RETHINK_BOOT_STAGGER_MS);
-    }
     rethink_tp_start();
 }
 
