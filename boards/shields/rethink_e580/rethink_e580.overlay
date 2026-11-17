@@ -11,7 +11,8 @@
  * comments name the keys by their UK ISO legends.
  *
  * The Caps Lock and Num Lock LEDs follow the host; the Fn lock, mute and mic
- * mute LEDs rest on their pull-ups. No backlight yet: BUCK1 stays off. The
+ * mute LEDs rest on their pull-ups. The backlight is on the 12-pin cable
+ * (BL_5V, PWM), unlocked only when the keyboard grounds KBD_BL_DTCT. The
  * TrackPoint is TP2 as on rethink_t480 (3.3 V), a mouse; its buttons come
  * over the matrix cable (pins 33-35) to the stick.
  */
@@ -22,6 +23,7 @@
 #include "../rethink_common/rethink_adapter.dtsi"
 #include "../rethink_common/rethink_adapter_matrix.dtsi"
 #include "../rethink_common/rethink_trackpoint.dtsi"
+#include "../rethink_common/rethink_backlight.dtsi"
 
 &rethink_adapter {
     capslock-led-gpios = <&rethink_expander RETHINK_EXP_LEDCPSLOCK 0>;

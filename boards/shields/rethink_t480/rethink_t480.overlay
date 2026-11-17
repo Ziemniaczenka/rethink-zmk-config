@@ -13,8 +13,9 @@
  *
  * Pin 36 of the matrix cable is KBD_ID, on DRV16, which the matrix leaves
  * alone (no key there). The Caps Lock LED follows the host; the Fn lock,
- * mute and mic mute LEDs rest on their pull-ups. No backlight yet: BUCK1
- * stays off. The TrackPoint is TP2 (adapter JP7, JP8, JP9 at 1-2: 3.3 V), a
+ * mute and mic mute LEDs rest on their pull-ups. The backlight is on the
+ * 12-pin cable (BL_5V, PWM), unlocked only when the keyboard grounds
+ * KBD_BL_DTCT. The TrackPoint is TP2 (adapter JP7, JP8, JP9 at 1-2: 3.3 V), a
  * mouse; its three buttons come over the matrix cable (pins 33-35) to the
  * adapter and on to the stick.
  */
@@ -25,6 +26,7 @@
 #include "../rethink_common/rethink_adapter.dtsi"
 #include "../rethink_common/rethink_adapter_matrix.dtsi"
 #include "../rethink_common/rethink_trackpoint.dtsi"
+#include "../rethink_common/rethink_backlight.dtsi"
 
 &rethink_adapter {
     capslock-led-gpios = <&rethink_expander RETHINK_EXP_LEDCPSLOCK 0>;

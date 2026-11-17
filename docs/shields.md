@@ -146,9 +146,9 @@ ThinkPad T480 keyboard on FFC2: the 36-pin matrix cable and the 12-pin cable (Tr
   | 4, K, P, B, S | Sleep, ScrLk, Pause, Break, SysRq |
   | PrtSc | Snipping tool (Win+Shift+S) |
 
-  Fn lock (Fn+Esc), Bluetooth (F10), keyboard settings (F11), the star key (F12) and the backlight (Fn+Space) are left out for now.
+  Fn lock (Fn+Esc), Bluetooth (F10), keyboard settings (F11) and the star key (F12) are left out for now; Fn+Space is the backlight (below).
 - **Caps Lock LED** follows the host. The Fn lock, mute and mic mute LEDs rest on their pull-ups.
-- **Not yet:** the backlight (BUCK1 stays off). KBD_BL_DTCT is read (`bl-detect-gpios`) all the same: a backlit keyboard grounds it, and it then rests on a pull-down; on its pull-up it drew about 35 µA on the E580, System OFF included.
+- **Backlight:** on the 12-pin cable (BL_5V from the adapter's boost, PWM on P1.17), Fn+Space cycles low, high, off (51 % and 100 % of `CONFIG_RETHINK_BACKLIGHT_MAX_DUTY`, 10 %), off at boot and while idle. Unlocked only when the keyboard grounds KBD_BL_DTCT (`bl-detect-gpios`), which then rests on a pull-down; on its pull-up it drew about 35 µA on the E580, System OFF included. Untested on a backlit keyboard.
 - **TrackPoint:** TP2 on the 12-pin cable, at 3.3 V (adapter JP7, JP8, JP9 at 1-2, `CONFIG_RETHINK_TP2_SUPPLY_3V3`), a mouse; its buttons come over the matrix cable (pins 33-35) to the adapter and on to the stick. This generation's sticks (T480, E580) have no press-to-select, so Alt+Fn+F8 isn't bound to it. See [Pointing stick](pointing-stick.md).
 - **Name:** "ReThink T480".
 

@@ -14,8 +14,8 @@
  * mute), brightness down/up, display (Win+P) and settings (Win+I) on F1-F9,
  * and the ThinkPad's sleep on 4, ScrLk on K, Pause on P, Break on B, SysRq
  * on S, the snipping tool (Win+Shift+S) on PrtSc. Fn lock (Fn+Esc and its
- * LED), Bluetooth, keyboard settings, the star key and the backlight
- * (Fn+Space) are left out for now.
+ * LED), Bluetooth, keyboard settings and the star key are left out for
+ * now. Fn+Space cycles the backlight: low, high, off.
  *
  * Fn+F8 (airplane mode on the keycap, which has no key code) switches the
  * TrackPoint on and off; Ctrl+Fn+F8 recalibrates it, with the hands off the
@@ -26,6 +26,7 @@
  */
 
 #include <behaviors.dtsi>
+#include <dt-bindings/zmk/backlight.h>
 #include <dt-bindings/zmk/keys.h>
 #include <dt-bindings/rethink/trackpoint.h>
 
@@ -86,8 +87,8 @@
                    &trans  &trans  &kp LA(PSCRN)  &trans  &trans  &trans  &trans  &trans  &kp SLCK  &trans  &trans  &trans  &trans
                 // LShift  \ ISO   Z       X       C       V       B                    N       M       ,       .       /       RShift
                    &trans  &trans  &trans  &trans  &trans  &trans  &kp LC(PAUSE_BREAK)  &trans  &trans  &trans  &trans  &trans  &trans
-                // Fn      LCtrl   Win     LAlt    Space   AltGr   PrtSc          RCtrl   PgUp    Up      PgDn
-                   &trans  &trans  &trans  &trans  &trans  &trans  &kp LG(LS(S))  &trans  &trans  &trans  &trans
+                // Fn      LCtrl   Win     LAlt    Space         AltGr   PrtSc          RCtrl   PgUp    Up      PgDn
+                   &trans  &trans  &trans  &trans  &bl BL_CYCLE  &trans  &kp LG(LS(S))  &trans  &trans  &trans  &trans
                 // Left    Down    Right
                    &trans  &trans  &trans
             >;
