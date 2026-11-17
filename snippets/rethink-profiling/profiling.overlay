@@ -4,6 +4,10 @@
  *
  * Charging off, so USB plugged in (for the shell) doesn't charge into the
  * supply. framework-cb's charger driver stops the charger at boot.
+ *
+ * BUCK2 from a 3.3 V supply (3.24-3.27 V at the board) is handled as on a low
+ * cell: src/pmic.c restarts it at boot if it started stuck, src/power.c keeps
+ * it at 3.0 V under 3.55 V.
  */
 
 &npm1300_charger {

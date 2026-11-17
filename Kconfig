@@ -226,8 +226,8 @@ config RETHINK_POWER
 	help
 	  rethink_power_off(): System OFF with the stick, the adapter, the
 	  backlight and the LEDs off. USB power always wakes the board. Used by
-	  RETHINK_WIRED_OFF, RETHINK_LOW_BATTERY_OFF_MV and
-	  RETHINK_IDLE_SLEEP_MIN; "power" shell commands.
+	  RETHINK_WIRED_OFF, RETHINK_LOW_BATTERY_OFF_MV, RETHINK_RESET_LOOP_OFF
+	  and RETHINK_IDLE_SLEEP_MIN; "power" shell commands.
 
 if RETHINK_POWER
 
@@ -238,11 +238,72 @@ config RETHINK_LOW_BATTERY_OFF_MV
 	depends on SENSOR
 	depends on $(dt_chosen_enabled,$(RETHINK_DT_CHOSEN_BATTERY))
 	help
-	  Three readings 10 s apart under it, without USB power: System OFF,
-	  which only USB ends. Keeps the Li-ion cell from running flat (a few
-	  percent is left at 3.3 V). The voltage comes from the zmk,battery
-	  device (framework-cb's fuel gauge, GAUGE_VOLTAGE); the level would
-	  depend on the battery model.
+	  Three readings 10 s apart under it, without USB power: off, which
+	  only USB ends (RETHINK_LOW_BATTERY_SHIP_MODE, else System OFF). Keeps
+	  the Li-ion cell from running flat (a few percent is left at 3.3 V).
+	  The voltage comes from the zmk,battery device (framework-cb's fuel
+	  gauge, GAUGE_VOLTAGE); the level would depend on the battery model.
+
+config RETHINK_LOW_BATTERY_SHIP_MODE
+	bool "Low-battery off in the nPM1300's ship mode"
+	default y
+	depends on RETHINK_LOW_BATTERY_OFF_MV != 0
+	depends on REGULATOR
+	depends on $(dt_nodelabel_enabled,npm1300_regulators)
+	help
+	  Everything off, BUCK2 included, which System OFF keeps running: the
+	  nPM1300 draws next to nothing until USB wakes it, and the board then
+	  starts afresh, from USB power. Falls back to System OFF if the
+	  nPM1300 doesn't take it.
+
+config RETHINK_BUCK2_LOW_MV
+	int "BUCK2 to 3.0 V under this battery voltage (mV, 0 = never switch)"
+	default 3550
+	range 0 4500
+	depends on SENSOR
+	depends on REGULATOR
+	depends on $(dt_chosen_enabled,$(RETHINK_DT_CHOSEN_BATTERY))
+	depends on $(dt_nodelabel_enabled,npm1300_buck2)
+	help
+	  BUCK2, the 3.3 V rail of the board and the adapter, out of dropout,
+	  which costs about 3 mA, System OFF included (BUCK2 at 3.3 V from a
+	  3.3 V supply: 4.8 mA connected and idle, 3.15 mA in System OFF; at
+	  3.0 V: 1.8 mA and 2.1 uA). Under this voltage it runs at 3.0 V, at
+	  3.3 V again over RETHINK_BUCK2_HIGH_MV, both changes made with
+	  headroom. A change of its voltage from a cell below about 3.35 V
+	  brings a state that draws as much, until the cell is above that
+	  again or USB is plugged in (PWM mode, its power good never comes;
+	  "pmic" in the shell shows it); RETHINK_BUCK2_RESTART makes the
+	  change at boot and clears the state. At 3.0 V the white and blue
+	  LEDs barely light. "power buck2" changes both thresholds until the
+	  next reset.
+
+config RETHINK_BUCK2_HIGH_MV
+	int "BUCK2 back to 3.3 V over this battery voltage (mV)"
+	default 3650
+	range 3000 4500
+	depends on RETHINK_BUCK2_LOW_MV != 0
+	help
+	  Above RETHINK_BUCK2_LOW_MV, so a reading near it doesn't switch BUCK2
+	  back and forth.
+
+config RETHINK_RESET_LOOP_OFF
+	int "Ship mode after this many resets in a row on battery (0 = never)"
+	default 3
+	range 0 20
+	depends on RETHINK_LOW_BATTERY_SHIP_MODE
+	depends on SETTINGS
+	depends on MFD_NPM13XX
+	help
+	  A cell too weak for the board (worn, cold or nearly empty) can reset
+	  it as it starts, again and again, a few mA on average, and the
+	  low-battery off, three readings 10 s apart, never comes. Each start
+	  on battery is counted in flash; 30 s up, or a power-off of any kind,
+	  clears the count, and a start on USB power doesn't count. A start
+	  that finds this many in a row goes to ship mode before BUCK2's
+	  restart at boot, the stick and Bluetooth: only USB wakes it. Two flash writes per start on
+	  battery. After the start that USB woke, "power stat" shows why the
+	  board was in ship mode.
 
 config RETHINK_IDLE_SLEEP_MIN
 	int "Minutes unused on battery before sleeping (0 = never)"
@@ -362,6 +423,23 @@ config RETHINK_TRACKPOINT_IDLE_OFF_MIN
 	  off (about 19 mA from the battery with a 5 V T420 stick). The next
 	  key press starts it again, in about 0.3 s. 0 keeps it
 	  on. &tp TP_OFF switches it off until &tp TP_ON.
+
+config RETHINK_TRACKPOINT_GUARD
+	bool "Leave the stick off after a switch-on that reset the board"
+	default y
+	depends on SETTINGS
+	help
+	  Switching the stick's supply (TP_3V3) on charges its capacitors and
+	  the adapter's at once: a surge from the battery input. From a weak
+	  source (a worn or nearly empty cell, a power profiler, a bench supply
+	  through a multimeter) the board resets, and starting the stick again
+	  resets it again: a boot loop. With this, a switch-on on battery is
+	  marked in flash and the mark cleared once the board came through it
+	  (two writes per switch-on on battery). A board that boots with the
+	  mark still there leaves the stick off, the keyboard working, until
+	  USB power or &tp TP_ON (Fn+F8, "tp on"). In wired mode without USB
+	  the stick is left off anyway until USB power or the switch to
+	  Bluetooth.
 
 config RETHINK_TRACKPOINT_SAMPLE_RATE
 	int "Reports per second on battery"
@@ -517,6 +595,40 @@ config RETHINK_BLE_SHELL
 	  last reset's cause and record (RETHINK_RESET_DIAG); each event is
 	  also logged as rethink_ble. The rethink-usb-shell snippet provides
 	  the shell.
+
+config RETHINK_PMIC
+	bool "nPM1300: BUCK1 off at boot, \"pmic\" shell command"
+	default y
+	depends on REGULATOR
+	depends on MFD_NPM13XX
+	depends on $(dt_nodelabel_enabled,npm1300_buck1)
+	help
+	  BUCK1 only feeds the backlight switch. The board's
+	  regulator-boot-off leaves it running, because Zephyr reads it as off
+	  (BUCKSTATUS power-good bit 0 while VO1 is at 3.3 V); from a cell
+	  below about 3.4 V it then sits in dropout, drawing about 3 mA. This
+	  switches it off with an enable and a disable, leaving its reference
+	  count unchanged; the backlight switches it on when it needs it. With
+	  a shell, "pmic" shows the bucks' status and the battery current, now
+	  and as last read on battery.
+
+config RETHINK_BUCK2_RESTART
+	bool "Restart BUCK2 after a change without headroom, and when stuck"
+	default y
+	depends on RETHINK_PMIC
+	help
+	  The nPM1300 starts BUCK2 at 3.3 V (VSET2). A change of its voltage
+	  from a cell below about 3.35 V (a nearly empty cell, a 3.3 V bench
+	  or profiler supply) leaves it in PWM mode with its power good at 0:
+	  about 3 mA more, System OFF included, until the input rises or USB
+	  comes; switching it off and on clears it. At boot, from a cell under
+	  RETHINK_BUCK2_LOW_MV, this sets BUCK2 to 3.0 V and then switches it
+	  off and on. At boot and at each battery check (every 10 s), a BUCK2
+	  in PWM mode is switched off and on. The two register writes go one
+	  after the other; the nRF and the adapter run through the gap on the
+	  rail's capacitors. "pmic" shows what was done. If the second write
+	  failed, the board would stay off until battery and USB are both
+	  disconnected.
 
 config RETHINK_RESET_DIAG
 	bool "Record a crash or stall for after the reset"

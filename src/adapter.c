@@ -151,10 +151,12 @@ static enum rethink_bl_detect sample_bl_detect(void) {
     return levels & BL_DETECT_BIT ? RETHINK_BL_ABSENT : RETHINK_BL_PRESENT;
 }
 
-// The pull-up stays on unless a backlit keyboard holds the pin low
+// The pull-up stays on unless a backlit keyboard holds the pin low (it drew
+// about 35 µA through the E580's, System OFF included); then a pull-down,
+// which keeps the pin defined if the cable comes out
 static int park_bl_detect(void) {
     int err = rethink_exp_configure(bl_detect, bl_state == RETHINK_BL_PRESENT
-                                                   ? RETHINK_EXP_IN
+                                                   ? RETHINK_EXP_IN_PULL_DOWN
                                                    : RETHINK_EXP_IN_PULL_UP);
     if (err) {
         LOG_ERR("Failed to configure KBD_BL_DTCT (%d)", err);
@@ -193,7 +195,7 @@ static int led_apply(uint8_t pin, bool on) {
 // to 80 µA (U1 datasheet, ΔIDD); an adapter without a keyboard drew 0.5 mA
 // from LED_3V3, which stays on in System OFF. A pull-up costs current only
 // while something holds its pin low: KBD_BL_DTCT keeps its pull-up unless a
-// backlit keyboard grounds it. Status LEDs go off.
+// backlit keyboard grounds it, then rests on a pull-down. Status LEDs go off.
 static int park_pins(void) {
     int err = 0;
 

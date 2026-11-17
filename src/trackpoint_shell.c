@@ -233,9 +233,20 @@ static int cmd_stat(const struct shell *sh, size_t argc, char **argv) {
 
     rethink_tp_stats_get(&s);
 
-    shell_print(sh, "Stick: %s", !rethink_tp_powered() ? "off"
-                                 : rethink_tp_pointing() ? "pointing"
-                                                         : "on, raw");
+    static const char *const held[] = {
+        [RETHINK_TP_HELD_NONE] = "",
+        [RETHINK_TP_HELD_WIRED] = " (left off in wired mode without USB: on with USB power or "
+                                  "the switch to Bluetooth)",
+        [RETHINK_TP_HELD_GUARD] = " (left off: its last switch-on reset the board; on with USB "
+                                  "power, Fn+F8 or tp on)",
+    };
+    enum rethink_tp_held h = rethink_tp_held();
+
+    shell_print(sh, "Stick: %s%s",
+                !rethink_tp_powered()  ? "off"
+                : rethink_tp_pointing() ? "pointing"
+                                        : "on, raw",
+                h < ARRAY_SIZE(held) ? held[h] : "");
     shell_print(sh, "Received: %u bytes; errors: %u framing, %u parity, %u broken off, %u dropped",
                 s.bytes, s.framing, s.parity, s.gaps, s.overruns);
     shell_print(sh, "Packets: %u reported, %u resyncs; with an error: %u sent again, %u lost",

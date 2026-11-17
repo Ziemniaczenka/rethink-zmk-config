@@ -37,7 +37,8 @@
         // only while the pointing stick is powered, and agree with R23.
         // A shield whose keyboard holds one of these low replaces the list,
         // with that pin on GPIO_PULL_DOWN (33 µA saved): T60 Mezzanine 36 on
-        // LEDMICMUTE is GND; check KBD_ID (DRV16) on the T480.
+        // LEDMICMUTE is GND; check KBD_ID (DRV16) on the T480. KBD_BL_DTCT
+        // needs no such list: FFC2 shields set bl-detect-gpios.
         idle-gpios = <&rethink_expander 2 GPIO_PULL_UP>,  // P0_2 HOTKEY
                      <&rethink_expander 3 GPIO_PULL_UP>,  // P0_3 PWRSWITCH
                      <&rethink_expander 4 GPIO_PULL_UP>,  // P0_4 DRV15
