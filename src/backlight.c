@@ -21,6 +21,17 @@
 #include <rethink/adapter.h>
 #endif
 
+// ZMK loads its saved backlight state in settings_load(), from main(), after
+// every SYS_INIT. The power chain is held off until then; at the settings'
+// commit, unless CONFIG_RETHINK_BACKLIGHT_RESTORE, ZMK's state goes back to a
+// first start's.
+#define HOLD_FOR_SETTINGS (IS_ENABLED(CONFIG_SETTINGS) && IS_ENABLED(CONFIG_ZMK_BACKLIGHT))
+
+#if HOLD_FOR_SETTINGS
+#include <zephyr/settings/settings.h>
+#include <zmk/backlight.h>
+#endif
+
 LOG_MODULE_REGISTER(rethink_backlight, CONFIG_RETHINK_BACKLIGHT_LOG_LEVEL);
 
 BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1, "Exactly one rethink,backlight node");
@@ -56,6 +67,7 @@ struct backlight_data {
     bool powered;
     bool unlocked;
     bool warned;
+    bool held;
     bool shut_down;
 };
 
@@ -126,7 +138,7 @@ static int apply(const struct device *dev) {
     struct backlight_data *data = dev->data;
     bool want = data->brightness > 0;
 
-    if (data->shut_down) {
+    if (data->shut_down || data->held) {
         want = false;
     } else if (want && !IS_ENABLED(CONFIG_RETHINK_BOOST_FITTED)) {
         if (!data->warned) {
@@ -213,6 +225,7 @@ static int backlight_init(const struct device *dev) {
     int err;
 
     k_mutex_init(&data->lock);
+    data->held = HOLD_FOR_SETTINGS;
     data->period_ns = cfg->pwm.period;
     data->max_duty = CONFIG_RETHINK_BACKLIGHT_MAX_DUTY;
 
@@ -241,6 +254,33 @@ static int backlight_init(const struct device *dev) {
             (uint32_t)(NSEC_PER_SEC / data->period_ns), data->max_duty, detect_name());
     return 0;
 }
+
+#if HOLD_FOR_SETTINGS
+// After ZMK's backlight loaded its state, which only set the brightness while
+// held. Only the first commit: a later settings_load() leaves it alone.
+static int backlight_settings_commit(void) {
+    struct backlight_data *data = backlight->data;
+
+    if (!data->held) {
+        return 0;
+    }
+#if !IS_ENABLED(CONFIG_RETHINK_BACKLIGHT_RESTORE)
+    // As at a first start; still held, so nothing is powered yet
+    zmk_backlight_set_brt(CONFIG_ZMK_BACKLIGHT_BRT_START);
+    if (!IS_ENABLED(CONFIG_ZMK_BACKLIGHT_ON_START)) {
+        zmk_backlight_off();
+    }
+#endif
+    k_mutex_lock(&data->lock, K_FOREVER);
+    data->held = false;
+    apply(backlight);
+    k_mutex_unlock(&data->lock);
+    return 0;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(rethink_backlight, "rethink_backlight", NULL, NULL,
+                               backlight_settings_commit, NULL);
+#endif
 
 #if IS_ENABLED(CONFIG_SHELL)
 // The value of a "<min-max>" argument, or a negative error

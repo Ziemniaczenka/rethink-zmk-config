@@ -686,6 +686,17 @@ config RETHINK_BACKLIGHT_TAP_UNLOCK
 	  backlit keyboard: bypasses KBD_BL_DTCT until reboot. Keyboards leave
 	  it off, so only a detected backlit keyboard unlocks the backlight.
 
+config RETHINK_BACKLIGHT_RESTORE
+	bool "Restore the backlight's last step at each start"
+	depends on ZMK_BACKLIGHT
+	help
+	  ZMK saves the backlight's state a minute after a change
+	  (ZMK_SETTINGS_SAVE_DEBOUNCE) and loads it at each start. n: each
+	  start begins as the first, per ZMK_BACKLIGHT_ON_START and
+	  ZMK_BACKLIGHT_BRT_START (off on the FFC2 shields). Either way the
+	  power chain stays off until the settings are loaded, so a start
+	  doesn't light it for a moment.
+
 config RETHINK_BACKLIGHT_INIT_PRIORITY
 	int "Init priority"
 	default 91

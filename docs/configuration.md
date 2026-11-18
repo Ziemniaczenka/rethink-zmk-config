@@ -52,6 +52,7 @@ What a keyboard has (status LEDs, KBD_BL_DTCT pin, backlight) is set by its shie
 | `CONFIG_RETHINK_ADAPTER_TEST` | n | `adapter` shell commands for bring-up (set by the `rethink-usb-shell` snippet) |
 | `CONFIG_RETHINK_MATRIX` | if `rethink,matrix` in DT | Matrix with expander columns, direct keys and ghost-key blocking |
 | `CONFIG_RETHINK_BACKLIGHT` | if `rethink,backlight` in DT | Backlight power chain, PWM and interlock (use with `CONFIG_ZMK_BACKLIGHT`) |
+| `CONFIG_RETHINK_BACKLIGHT_RESTORE` | n | The backlight's last step at each start (ZMK saves it a minute after a change); n: each start as the first (`CONFIG_ZMK_BACKLIGHT_ON_START`, off on the FFC2 shields). Either way it stays off until the settings are loaded |
 | `CONFIG_ZMK_IDLE_TIMEOUT` (ZMK's) | 30000 | Milliseconds without a key or the stick before the backlight goes off (`CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE`, set in the FFC2 shields); nothing else uses ZMK's idle state here |
 | `CONFIG_RETHINK_BACKLIGHT_TAP_UNLOCK` | y on `rethink_hw_tester`, else n | Triple tap of the pairing button unlocks the backlight until reboot, bypassing KBD_BL_DTCT |
 | `CONFIG_RETHINK_TRACKPOINT` | if `rethink,trackpoint` in DT | Pointing stick power, reset, PS/2 link and pointing |
